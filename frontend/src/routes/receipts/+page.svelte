@@ -8,6 +8,7 @@
 		Search,
 		Filter,
 		Plus,
+		Download,
 		ChevronLeft,
 		ChevronRight,
 		Receipt as ReceiptIcon,
@@ -34,6 +35,7 @@
 	// Loading and error states
 	let isLoading = true;
 	let isFetchingTags = true;
+	let isExporting = false;
 	let error: string | null = null;
 	
 	// Search and filters
@@ -301,6 +303,68 @@
 		goto(`/receipts/${receiptId}`);
 	}
 	
+	async function handleExport() {
+		if (isExporting) return;
+		
+		isExporting = true;
+		
+		try {
+			// Build query parameters for export (same filters as list)
+			const params = new URLSearchParams();
+			params.set('format', 'csv');
+			
+			// Convert YYYY-MM-DD to RFC3339 format for the API
+			if (fromDate) {
+				params.set('from', `${fromDate}T00:00:00Z`);
+			}
+			
+			if (toDate) {
+				params.set('to', `${toDate}T23:59:59Z`);
+			}
+			
+			const exportUrl = `/api/v1/receipts/export?${params.toString()}`;
+			
+			const response = await fetch(exportUrl);
+			
+			if (!response.ok) {
+				throw new Error(`Export failed: ${response.statusText}`);
+			}
+			
+			// Get the blob and trigger download
+			const blob = await response.blob();
+			const url = window.URL.createObjectURL(blob);
+			
+			// Generate filename with date range
+			const dateStr = fromDate && toDate 
+				? `${fromDate}_to_${toDate}`
+				: fromDate 
+					? `from_${fromDate}`
+					: toDate
+						? `to_${toDate}`
+						: 'all';
+			const filename = `receipts_${dateStr}.csv`;
+			
+			// Create temporary anchor to trigger download
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = filename;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			
+			// Clean up
+			window.URL.revokeObjectURL(url);
+			
+			toastStore.success('Receipts exported successfully');
+		} catch (err) {
+			const errorMessage = err instanceof Error ? err.message : 'Failed to export receipts';
+			toastStore.error(errorMessage);
+			console.error('Export failed:', err);
+		} finally {
+			isExporting = false;
+		}
+	}
+	
 	// ============ URL Sync ============
 	
 	function updateURL() {
@@ -401,13 +465,28 @@
 			<h1 class="text-3xl font-bold text-gray-900 mb-2">Receipts</h1>
 			<p class="text-gray-600">Manage and review your receipts</p>
 		</div>
-		<button
-			on:click={() => goto('/receipts/new')}
-			class="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors shadow-sm self-start"
-		>
-			<Plus class="w-5 h-5" />
-			<span class="font-medium">Add Receipt</span>
-		</button>
+		<div class="flex items-center gap-3 self-start">
+			<button
+				on:click={handleExport}
+				disabled={isExporting}
+				class="flex items-center gap-2 px-4 py-3 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+			>
+				{#if isExporting}
+					<div class="w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+					<span class="font-medium">Exporting...</span>
+				{:else}
+					<Download class="w-5 h-5" />
+					<span class="font-medium">Export CSV</span>
+				{/if}
+			</button>
+			<button
+				on:click={() => goto('/receipts/new')}
+				class="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors shadow-sm"
+			>
+				<Plus class="w-5 h-5" />
+				<span class="font-medium">Add Receipt</span>
+			</button>
+		</div>
 	</div>
 	
 	<!-- Error State -->
