@@ -1,20 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { analyticsDateRangeStore } from '$lib/stores';
+	import { analyticsDateRangeStore, toastStore } from '$lib/stores';
 	import api from '$lib/api';
-	import type { 
-		AnalyticsSummaryResponse, 
-		InsightsResponse, 
-		AnalyticsSummary,
-		Insights 
-	} from '$lib/api';
+	import type { AnalyticsSummary, Insights } from '$lib/api';
 	
 	let summary: AnalyticsSummary | null = null;
 	let insights: Insights | null = null;
 	let loading = true;
 	let error: string | null = null;
 	let warnings: string[] = [];
+	let exporting = false;
 	
 	async function loadData() {
 		loading = true;
@@ -39,10 +35,10 @@
 			
 			// Collect all warnings
 			if (summaryRes.warnings) {
-				warnings.push(...summaryRes.warnings.map(w => w.message));
+				warnings.push(...summaryRes.warnings.map((w: { message: string }) => w.message));
 			}
 			if (insightsRes.warnings) {
-				warnings.push(...insightsRes.warnings.map(w => w.message));
+				warnings.push(...insightsRes.warnings.map((w: { message: string }) => w.message));
 			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load analytics';
@@ -51,20 +47,41 @@
 		}
 	}
 	
+	async function exportCSV() {
+		exporting = true;
+		
+		try {
+			const { from, to } = $analyticsDateRangeStore;
+			const blob = await api.receipts.export({
+				from: from.toISOString(),
+				to: to.toISOString(),
+				format: 'csv'
+			});
+			
+			// Trigger download
+			const url = window.URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `receipts_${from.toISOString().split('T')[0]}_${to.toISOString().split('T')[0]}.csv`;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			window.URL.revokeObjectURL(url);
+			
+			toastStore.success('CSV exported successfully');
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Export failed';
+			toastStore.error(message);
+		} finally {
+			exporting = false;
+		}
+	}
+	
 	function formatCurrency(value: number): string {
 		return new Intl.NumberFormat('en-US', {
 			style: 'currency',
 			currency: 'USD'
 		}).format(value);
-	}
-	
-	function formatDate(dateStr: string): string {
-		const date = new Date(dateStr);
-		return date.toLocaleDateString('en-US', {
-			year: 'numeric',
-			month: 'long',
-			day: 'numeric'
-		});
 	}
 	
 	function getDayName(day: string): string {
@@ -126,6 +143,27 @@
 				{/each}
 			</div>
 		{/if}
+		
+		<section class="page-header">
+			<h2>Overview</h2>
+			<button 
+				class="export-button" 
+				on:click={exportCSV} 
+				disabled={exporting}
+			>
+				{#if exporting}
+					<div class="button-spinner"></div>
+					<span>Exporting...</span>
+				{:else}
+					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+						<polyline points="7 10 12 15 17 10"></polyline>
+						<line x1="12" y1="15" x2="12" y2="3"></line>
+					</svg>
+					<span>Export CSV</span>
+				{/if}
+			</button>
+		</section>
 		
 		<section class="summary-cards">
 			<div class="summary-card">
@@ -572,7 +610,60 @@
 		font-weight: 500;
 	}
 	
+	.page-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 24px;
+	}
+	
+	.page-header h2 {
+		font-size: 18px;
+		font-weight: 600;
+		color: #111827;
+		margin: 0;
+	}
+	
+	.export-button {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 16px;
+		background: #3b82f6;
+		color: white;
+		border: none;
+		border-radius: 6px;
+		cursor: pointer;
+		font-size: 14px;
+		font-weight: 500;
+		transition: all 0.2s;
+	}
+	
+	.export-button:hover:not(:disabled) {
+		background: #2563eb;
+	}
+	
+	.export-button:disabled {
+		opacity: 0.7;
+		cursor: not-allowed;
+	}
+	
+	.button-spinner {
+		width: 14px;
+		height: 14px;
+		border: 2px solid rgba(255, 255, 255, 0.3);
+		border-top-color: white;
+		border-radius: 50%;
+		animation: spin 1s linear infinite;
+	}
+	
 	@media (max-width: 640px) {
+		.page-header {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 12px;
+		}
+		
 		.summary-cards {
 			grid-template-columns: repeat(2, 1fr);
 		}

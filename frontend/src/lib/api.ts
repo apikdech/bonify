@@ -343,6 +343,15 @@ class APIClient {
 
 		reject: async (id: string): Promise<void> => {
 			await this.fetch(`/receipts/${id}/reject`, { method: 'PATCH' });
+		},
+
+		export: async (params: { from: string; to: string; format: string }): Promise<Blob> => {
+			const queryParams = new URLSearchParams();
+			queryParams.set('from', params.from);
+			queryParams.set('to', params.to);
+			queryParams.set('format', params.format);
+			const response = await this.fetch(`/receipts/export?${queryParams}`, { method: 'GET' });
+			return response.blob();
 		}
 	};
 
