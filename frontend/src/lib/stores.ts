@@ -1,5 +1,7 @@
 // Global stores for Receipt Manager
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
+import { goto } from '$app/navigation';
+import { page } from '$app/stores';
 import api from './api';
 
 // ============ Date Range Store ============
@@ -47,6 +49,146 @@ function createDateRangeStore() {
 }
 
 export const dateRangeStore = createDateRangeStore();
+
+// ============ Analytics Date Range Store with URL Sync ============
+
+export type DateRangePreset = 'this_week' | 'this_month' | 'last_month' | 'this_quarter' | 'this_year' | 'custom';
+
+export interface AnalyticsDateRange {
+	from: Date;
+	to: Date;
+	preset: DateRangePreset;
+}
+
+function startOfDay(date: Date): Date {
+	return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function endOfDay(date: Date): Date {
+	return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+}
+
+function startOfMonth(date: Date): Date {
+	return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function endOfMonth(date: Date): Date {
+	return new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
+}
+
+function startOfQuarter(date: Date): Date {
+	const quarter = Math.floor(date.getMonth() / 3);
+	return new Date(date.getFullYear(), quarter * 3, 1);
+}
+
+function getPresetDates(preset: DateRangePreset): { from: Date; to: Date } {
+	const now = new Date();
+	
+	switch (preset) {
+		case 'this_week': {
+			const dayOfWeek = now.getDay();
+			const startOfWeek = new Date(now);
+			startOfWeek.setDate(now.getDate() - dayOfWeek);
+			return { from: startOfDay(startOfWeek), to: endOfDay(now) };
+		}
+		case 'this_month':
+			return { from: startOfDay(startOfMonth(now)), to: endOfDay(now) };
+		case 'last_month': {
+			const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+			return { from: startOfDay(startOfMonth(lastMonth)), to: endOfDay(endOfMonth(lastMonth)) };
+		}
+		case 'this_quarter':
+			return { from: startOfDay(startOfQuarter(now)), to: endOfDay(now) };
+		case 'this_year':
+			return { from: startOfDay(new Date(now.getFullYear(), 0, 1)), to: endOfDay(now) };
+		default:
+			return { from: startOfDay(startOfMonth(now)), to: endOfDay(now) };
+	}
+}
+
+function createAnalyticsDateRangeStore() {
+	const { subscribe, set, update } = writable<AnalyticsDateRange>({
+		from: startOfMonth(new Date()),
+		to: endOfDay(new Date()),
+		preset: 'this_month'
+	});
+
+	let initialized = false;
+
+	function updateURL(range: AnalyticsDateRange) {
+		if (typeof window === 'undefined') return;
+		
+		const url = new URL(window.location.href);
+		const fromStr = range.from.toISOString().split('T')[0];
+		const toStr = range.to.toISOString().split('T')[0];
+		
+		url.searchParams.set('from', fromStr);
+		url.searchParams.set('to', toStr);
+		url.searchParams.set('preset', range.preset);
+		
+		goto(url.toString(), { replaceState: true, keepFocus: true });
+	}
+
+	return {
+		subscribe,
+		set: (range: AnalyticsDateRange) => {
+			set(range);
+			updateURL(range);
+		},
+		update,
+		setPreset: (preset: DateRangePreset) => {
+			if (preset === 'custom') {
+				update(current => {
+					const newRange = { ...current, preset };
+					updateURL(newRange);
+					return newRange;
+				});
+			} else {
+				const { from, to } = getPresetDates(preset);
+				const newRange = { from, to, preset };
+				set(newRange);
+				updateURL(newRange);
+			}
+		},
+		setCustomRange: (from: Date, to: Date) => {
+			const newRange = { from: startOfDay(from), to: endOfDay(to), preset: 'custom' as DateRangePreset };
+			set(newRange);
+			updateURL(newRange);
+		},
+		initializeFromURL: () => {
+			if (initialized || typeof window === 'undefined') return;
+			
+			const url = new URL(window.location.href);
+			const fromParam = url.searchParams.get('from');
+			const toParam = url.searchParams.get('to');
+			const presetParam = url.searchParams.get('preset') as DateRangePreset | null;
+			
+			if (fromParam && toParam) {
+				const from = new Date(fromParam);
+				const to = new Date(toParam);
+				
+				if (!isNaN(from.getTime()) && !isNaN(to.getTime())) {
+					const preset = presetParam || 'custom';
+					set({ from, to, preset });
+				}
+			} else if (presetParam && presetParam !== 'custom') {
+				const { from, to } = getPresetDates(presetParam);
+				set({ from, to, preset: presetParam });
+			}
+			
+			initialized = true;
+		},
+		getQueryParams: () => {
+			const state = get({ subscribe });
+			return {
+				from: state.from.toISOString(),
+				to: state.to.toISOString()
+			};
+		}
+	};
+}
+
+export const analyticsDateRangeStore = createAnalyticsDateRangeStore();
 
 // ============ Pending Count Store ============
 

@@ -119,6 +119,105 @@ export interface UpdateTagRequest {
 	color?: string;
 }
 
+// ============ Analytics Interfaces ============
+
+export interface AnalyticsSummary {
+	total_spend: number;
+	receipt_count: number;
+	avg_per_receipt: number;
+}
+
+export interface AnalyticsSummaryResponse {
+	data: AnalyticsSummary;
+	warnings?: ConversionWarning[];
+}
+
+export interface ConversionWarning {
+	currency: string;
+	message: string;
+}
+
+export interface MonthData {
+	month: string;
+	total: number;
+	count: number;
+}
+
+export interface MonthlyTrendsResponse {
+	data: MonthData[];
+	warnings?: ConversionWarning[];
+}
+
+export interface TagSpend {
+	tag_id: string;
+	name: string;
+	color: string;
+	total: number;
+	count: number;
+	percentage: number;
+}
+
+export interface ByTagResponse {
+	data: TagSpend[];
+	warnings?: ConversionWarning[];
+}
+
+export interface ShopSpend {
+	name: string;
+	total: number;
+	visit_count: number;
+	avg_ticket: number;
+	last_visit: string;
+}
+
+export interface ByShopResponse {
+	data: ShopSpend[];
+	warnings?: ConversionWarning[];
+}
+
+export interface BiggestReceipt {
+	id: string;
+	title: string;
+	total: number;
+	date: string;
+}
+
+export interface MostVisitedShop {
+	name: string;
+	visits: number;
+}
+
+export interface MoMChange {
+	percentage: number;
+	absolute: number;
+}
+
+export interface BusiestDay {
+	day: string;
+	total: number;
+}
+
+export interface Insights {
+	biggest_receipt: BiggestReceipt | null;
+	most_visited_shop: MostVisitedShop | null;
+	mom_change: MoMChange | null;
+	busiest_day: BusiestDay | null;
+}
+
+export interface InsightsResponse {
+	data: Insights;
+	warnings?: ConversionWarning[];
+}
+
+export interface AnalyticsParams {
+	from: string;
+	to: string;
+}
+
+export interface MonthlyTrendsParams {
+	months?: number;
+}
+
 // ============ API Client Class ============
 
 class APIClient {
@@ -273,6 +372,49 @@ class APIClient {
 
 		delete: async (id: string): Promise<void> => {
 			await this.fetch(`/tags/${id}`, { method: 'DELETE' });
+		}
+	};
+
+	// ============ Analytics Methods ============
+
+	analytics = {
+		summary: async (params: AnalyticsParams): Promise<AnalyticsSummaryResponse> => {
+			const queryParams = new URLSearchParams();
+			queryParams.set('from', params.from);
+			queryParams.set('to', params.to);
+			const response = await this.fetch(`/analytics/summary?${queryParams}`, { method: 'GET' });
+			return response.json();
+		},
+
+		monthly: async (params: MonthlyTrendsParams = {}): Promise<MonthlyTrendsResponse> => {
+			const queryParams = new URLSearchParams();
+			if (params.months) queryParams.set('months', String(params.months));
+			const response = await this.fetch(`/analytics/monthly?${queryParams}`, { method: 'GET' });
+			return response.json();
+		},
+
+		byTag: async (params: AnalyticsParams): Promise<ByTagResponse> => {
+			const queryParams = new URLSearchParams();
+			queryParams.set('from', params.from);
+			queryParams.set('to', params.to);
+			const response = await this.fetch(`/analytics/by-tag?${queryParams}`, { method: 'GET' });
+			return response.json();
+		},
+
+		byShop: async (params: AnalyticsParams): Promise<ByShopResponse> => {
+			const queryParams = new URLSearchParams();
+			queryParams.set('from', params.from);
+			queryParams.set('to', params.to);
+			const response = await this.fetch(`/analytics/by-shop?${queryParams}`, { method: 'GET' });
+			return response.json();
+		},
+
+		insights: async (params: AnalyticsParams): Promise<InsightsResponse> => {
+			const queryParams = new URLSearchParams();
+			queryParams.set('from', params.from);
+			queryParams.set('to', params.to);
+			const response = await this.fetch(`/analytics/insights?${queryParams}`, { method: 'GET' });
+			return response.json();
 		}
 	};
 }

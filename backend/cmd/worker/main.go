@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"go.temporal.io/sdk/client"
@@ -111,6 +112,28 @@ func main() {
 	w.RegisterActivity(activities.SaveReceiptActivity)
 	w.RegisterActivity(activities.NotifyUserActivity)
 	w.RegisterActivity(activities.FetchFXRatesActivity)
+
+	// Schedule FX sync workflow to run daily at 2 AM
+	scheduleOptions := client.ScheduleOptions{
+		ID: "fx-sync-daily",
+		Spec: client.ScheduleSpec{
+			CronExpressions: []string{"0 2 * * *"}, // 2 AM daily
+		},
+		Action: &client.ScheduleWorkflowAction{
+			ID:        "fx-sync-" + time.Now().Format("20060102-150405"),
+			Workflow:  workflow.FXSyncWorkflow,
+			TaskQueue: cfg.Temporal.TaskQueue,
+		},
+	}
+
+	scheduleClient := temporalClient.ScheduleClient()
+	_, err = scheduleClient.Create(context.Background(), scheduleOptions)
+	if err != nil {
+		// Schedule might already exist, log but don't fail
+		logger.Info("FX sync schedule may already exist or failed to create", "error", err)
+	} else {
+		logger.Info("FX sync scheduled workflow created", "schedule", "0 2 * * *")
+	}
 
 	logger.Info("Worker starting", "taskQueue", cfg.Temporal.TaskQueue)
 

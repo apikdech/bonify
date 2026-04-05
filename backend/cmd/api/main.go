@@ -74,12 +74,16 @@ func main() {
 	userRepo := repository.NewUserRepo(database.Pool)
 	receiptRepo := repository.NewReceiptRepo(database.Pool)
 	tagRepo := repository.NewTagRepo(database.Pool)
+	fxRepo := repository.NewFXRepo(database.Pool)
+	analyticsRepo := repository.NewAnalyticsRepo(database.Pool)
 	logger.Info("Repositories initialized")
 
 	// Initialize all services
 	authService := service.NewAuthService(cfg, userRepo, redisClient)
 	receiptService := service.NewReceiptService(receiptRepo, tagRepo)
 	tagService := service.NewTagService(tagRepo)
+	_ = service.NewFXService(fxRepo) // Reserved for FX sync workflow
+	analyticsService := service.NewAnalyticsService(analyticsRepo, fxRepo, userRepo)
 	storageService, err := service.NewStorageService(cfg)
 	if err != nil {
 		logger.Error("Failed to initialize storage service", "error", err)
@@ -140,6 +144,7 @@ func main() {
 	authHandler := handler.NewAuthHandler(cfg, authService)
 	receiptHandler := handler.NewReceiptHandler(cfg, receiptService)
 	tagHandler := handler.NewTagHandler(cfg, tagService)
+	analyticsHandler := handler.NewAnalyticsHandler(cfg, analyticsService)
 	logger.Info("Handlers initialized")
 
 	// Setup Chi router with middleware
@@ -209,6 +214,18 @@ func main() {
 		r.Post("/", tagHandler.Create)
 		r.Patch("/{id}", tagHandler.Update)
 		r.Delete("/{id}", tagHandler.Delete)
+	})
+
+	// Analytics routes (protected + rate limited)
+	r.Route("/api/v1/analytics", func(r chi.Router) {
+		r.Use(appmiddleware.JWTAuth(cfg))
+		r.Use(appmiddleware.RateLimit(redisClient, 60, time.Minute))
+
+		r.Get("/summary", analyticsHandler.Summary)
+		r.Get("/monthly", analyticsHandler.Monthly)
+		r.Get("/by-tag", analyticsHandler.ByTag)
+		r.Get("/by-shop", analyticsHandler.ByShop)
+		r.Get("/insights", analyticsHandler.Insights)
 	})
 
 	// Telegram webhook route (public - uses secret token for auth)
