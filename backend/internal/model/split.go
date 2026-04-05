@@ -30,6 +30,11 @@ type CreateSplitRequest struct {
 	Percentage float64 `json:"percentage,omitempty"`
 }
 
+// CreateSplitsRequest represents a request to create multiple receipt splits
+type CreateSplitsRequest struct {
+	Splits []CreateSplitRequest `json:"splits"`
+}
+
 // UpdateSplitRequest represents a request to update a receipt split
 type UpdateSplitRequest struct {
 	Amount     *float64 `json:"amount,omitempty"`

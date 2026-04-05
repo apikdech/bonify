@@ -76,6 +76,7 @@ func main() {
 	tagRepo := repository.NewTagRepo(database.Pool)
 	fxRepo := repository.NewFXRepo(database.Pool)
 	analyticsRepo := repository.NewAnalyticsRepo(database.Pool)
+	splitRepo := repository.NewSplitRepo(database.Pool)
 	logger.Info("Repositories initialized")
 
 	// Initialize all services
@@ -145,6 +146,7 @@ func main() {
 	receiptHandler := handler.NewReceiptHandler(cfg, receiptService)
 	tagHandler := handler.NewTagHandler(cfg, tagService)
 	analyticsHandler := handler.NewAnalyticsHandler(cfg, analyticsService)
+	splitHandler := handler.NewSplitHandler(cfg, splitRepo, receiptRepo)
 	logger.Info("Handlers initialized")
 
 	// Setup Chi router with middleware
@@ -203,6 +205,18 @@ func main() {
 		r.Delete("/{id}", receiptHandler.Delete)
 		r.Patch("/{id}/confirm", receiptHandler.Confirm)
 		r.Patch("/{id}/reject", receiptHandler.Reject)
+
+		// Split routes nested under receipts
+		r.Post("/{id}/splits", splitHandler.CreateSplits)
+		r.Get("/{id}/splits", splitHandler.GetSplits)
+	})
+
+	// Split settlements route (protected + rate limited)
+	r.Route("/api/v1/splits", func(r chi.Router) {
+		r.Use(appmiddleware.JWTAuth(cfg))
+		r.Use(appmiddleware.RateLimit(redisClient, 60, time.Minute))
+
+		r.Get("/settlements", splitHandler.GetSettlements)
 	})
 
 	// Tag routes (protected + rate limited)
