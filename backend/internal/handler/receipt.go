@@ -1,13 +1,14 @@
 package handler
 
 import (
-	"context"
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -22,11 +23,6 @@ import (
 type ReceiptHandler struct {
 	cfg            *config.Config
 	receiptService *service.ReceiptService
-}
-
-// ReceiptServiceInterface defines the interface for receipt service operations
-type ReceiptServiceInterface interface {
-	ListAll(ctx context.Context, filter *model.ListReceiptsFilter) ([]*model.Receipt, error)
 }
 
 // NewReceiptHandler creates a new receipt handler
@@ -497,14 +493,9 @@ func (h *ReceiptHandler) ExportCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set headers for CSV download
-	w.Header().Set("Content-Type", "text/csv")
-	filename := fmt.Sprintf("receipts_%s.csv", time.Now().Format("2006-01-02"))
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
-
-	// Write CSV
-	writer := csv.NewWriter(w)
-	defer writer.Flush()
+	// Buffer CSV in memory first to handle errors properly
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
 
 	// Write header
 	headers := []string{"date", "shop", "items", "total", "currency", "tags", "source", "status"}
@@ -517,10 +508,24 @@ func (h *ReceiptHandler) ExportCSV(w http.ResponseWriter, r *http.Request) {
 	for _, receipt := range receipts {
 		row := h.formatReceiptForCSV(receipt)
 		if err := writer.Write(row); err != nil {
-			// Can't write error after headers sent, just log
+			http.Error(w, `{"error": "failed to write CSV data"}`, http.StatusInternalServerError)
 			return
 		}
 	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		http.Error(w, `{"error": "failed to flush CSV data"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Set headers for CSV download only after successful write
+	w.Header().Set("Content-Type", "text/csv")
+	filename := fmt.Sprintf("receipts_%s.csv", time.Now().Format("2006-01-02"))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+
+	// Write the buffered CSV to response
+	w.Write(buf.Bytes())
 }
 
 // formatReceiptForCSV formats a receipt as a CSV row
@@ -544,7 +549,7 @@ func (h *ReceiptHandler) formatReceiptForCSV(receipt *model.Receipt) []string {
 		for _, item := range receipt.Items {
 			itemParts = append(itemParts, fmt.Sprintf("%s (%.2f x %.2f)", item.Name, item.Quantity, item.UnitPrice))
 		}
-		items = fmt.Sprintf("\"%s\"", joinStrings(itemParts, "; "))
+		items = strings.Join(itemParts, "; ")
 	}
 
 	// Total
@@ -560,7 +565,7 @@ func (h *ReceiptHandler) formatReceiptForCSV(receipt *model.Receipt) []string {
 		for _, tag := range receipt.Tags {
 			tagNames = append(tagNames, tag.Name)
 		}
-		tags = joinStrings(tagNames, ", ")
+		tags = strings.Join(tagNames, ", ")
 	}
 
 	// Source
@@ -571,16 +576,3 @@ func (h *ReceiptHandler) formatReceiptForCSV(receipt *model.Receipt) []string {
 
 	return []string{date, shop, items, total, currency, tags, source, status}
 }
-
-// joinStrings joins a slice of strings with a separator
-func joinStrings(strs []string, sep string) string {
-	result := ""
-	for i, s := range strs {
-		if i > 0 {
-			result += sep
-		}
-		result += s
-	}
-	return result
-}
-

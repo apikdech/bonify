@@ -104,7 +104,7 @@ func TestFormatReceiptForCSV(t *testing.T) {
 					{Name: "monthly"},
 				},
 			},
-			expected: []string{"2024-01-15", "Test Shop", `"Item 1 (2.00 x 25.00); Item 2 (1.00 x 50.50)"`, "100.50", "USD", "groceries, monthly", "manual", "confirmed"},
+			expected: []string{"2024-01-15", "Test Shop", "Item 1 (2.00 x 25.00); Item 2 (1.00 x 50.50)", "100.50", "USD", "groceries, monthly", "manual", "confirmed"},
 		},
 		{
 			name: "Receipt without title uses empty shop",
@@ -138,7 +138,7 @@ func TestFormatReceiptForCSV(t *testing.T) {
 					{Name: "office"},
 				},
 			},
-			expected: []string{"2024-03-10", "Another Store", `"Product A (3.00 x 10.00)"`, "30.00", "GBP", "office", "api", "rejected"},
+			expected: []string{"2024-03-10", "Another Store", "Product A (3.00 x 10.00)", "30.00", "GBP", "office", "api", "rejected"},
 		},
 	}
 
@@ -170,26 +170,6 @@ func TestExportCSV_MethodNotAllowed(t *testing.T) {
 
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status %d, got %d", http.StatusMethodNotAllowed, rr.Code)
-	}
-}
-
-func TestJoinStrings(t *testing.T) {
-	tests := []struct {
-		strs     []string
-		sep      string
-		expected string
-	}{
-		{[]string{}, ", ", ""},
-		{[]string{"a"}, ", ", "a"},
-		{[]string{"a", "b", "c"}, ", ", "a, b, c"},
-		{[]string{"x", "y"}, "; ", "x; y"},
-	}
-
-	for _, tt := range tests {
-		result := joinStrings(tt.strs, tt.sep)
-		if result != tt.expected {
-			t.Errorf("joinStrings(%v, %q) = %q, expected %q", tt.strs, tt.sep, result, tt.expected)
-		}
 	}
 }
 
