@@ -8,6 +8,8 @@ vendor/
 # Build outputs
 dist/
 build/
+backend/api
+backend/worker
 *.exe
 *.dll
 *.so
