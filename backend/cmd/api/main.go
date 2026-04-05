@@ -171,6 +171,13 @@ func main() {
 		MaxAge:           300,
 	}))
 
+	// Liveness for reverse proxies (Traefik health check); no auth.
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+
 	// Health check endpoint (protected, with rate limiting)
 	r.Group(func(r chi.Router) {
 		r.Use(appmiddleware.JWTAuth(cfg))

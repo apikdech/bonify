@@ -5,7 +5,7 @@ services:
   # Traefik Production Configuration
   # ============================================================================
   traefik:
-    image: traefik:v3.0
+    image: traefik:v3.6
     container_name: receipt-manager-traefik
     command: [] # Use traefik.prod.yml instead of command args
     ports:
@@ -48,7 +48,7 @@ services:
       - "traefik.http.routers.api-prod.tls=true"
       - "traefik.http.routers.api-prod.tls.certresolver=letsencrypt"
       - "traefik.http.routers.api-prod.service=api"
-      - "traefik.http.routers.api-prod.middlewares=security-headers,cors,rate-limit-api,compression,circuit-breaker"
+      - "traefik.http.routers.api-prod.middlewares=security-headers@file,cors@file,rate-limit-api@file,compression@file,circuit-breaker@file"
 
       # Webhook Router - HTTPS
       - "traefik.http.routers.webhooks-prod.rule=Host(`${DOMAIN:-localhost}`) && PathPrefix(`/webhooks`)"
@@ -56,7 +56,7 @@ services:
       - "traefik.http.routers.webhooks-prod.tls=true"
       - "traefik.http.routers.webhooks-prod.tls.certresolver=letsencrypt"
       - "traefik.http.routers.webhooks-prod.service=api"
-      - "traefik.http.routers.webhooks-prod.middlewares=security-headers,rate-limit-webhooks,compression"
+      - "traefik.http.routers.webhooks-prod.middlewares=security-headers@file,rate-limit-webhooks@file,compression@file"
 
       # Health Check
       - "traefik.http.routers.health-prod.rule=Host(`${DOMAIN:-localhost}`) && Path(`/health`)"
@@ -222,7 +222,7 @@ services:
       - "traefik.http.routers.temporal-ui-prod.tls.certresolver=letsencrypt"
       - "traefik.http.routers.temporal-ui-prod.service=temporal-ui"
       # Add basic auth and IP whitelist for security
-      - "traefik.http.routers.temporal-ui-prod.middlewares=strip-temporal-prefix,basic-auth,ip-whitelist,security-headers"
+      - "traefik.http.routers.temporal-ui-prod.middlewares=basic-auth@file,ip-whitelist@file,security-headers@file"
       - "traefik.http.services.temporal-ui.loadbalancer.server.port=8080"
 
     logging:

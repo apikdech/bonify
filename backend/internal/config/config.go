@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -170,12 +171,29 @@ func Load() (*Config, error) {
 		},
 	}
 
+	cfg.RustFS.Endpoint = normalizeRustFSEndpoint(cfg.RustFS.Endpoint, cfg.RustFS.UseSSL)
+
 	// Validate required fields
 	if cfg.JWT.JWTSecret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required but not set")
 	}
 
 	return cfg, nil
+}
+
+// normalizeRustFSEndpoint ensures a scheme so AWS SDK custom endpoints parse as URIs (e.g. host:port is invalid).
+func normalizeRustFSEndpoint(endpoint string, useSSL bool) string {
+	if endpoint == "" {
+		return "http://localhost:9000"
+	}
+	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
+		return endpoint
+	}
+	scheme := "http"
+	if useSSL {
+		scheme = "https"
+	}
+	return scheme + "://" + endpoint
 }
 
 // getEnv retrieves an environment variable or returns a default value

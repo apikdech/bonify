@@ -48,8 +48,7 @@ USER nonroot:nonroot
 # Expose API port (only relevant when running API mode)
 EXPOSE 8080
 
-# Default entrypoint - can be overridden in docker-compose
-# Usage:
-#   docker run <image> api     -> runs API server
-#   docker run <image> worker  -> runs Temporal worker
-ENTRYPOINT ["/usr/local/bin/api"]
+# Use CMD (not ENTRYPOINT) so compose `command:` replaces the binary entirely.
+# If ENTRYPOINT were the api binary, `command: ["/usr/local/bin/worker"]` would pass
+# that path as argv to api instead of running the worker.
+CMD ["/usr/local/bin/api"]

@@ -3,10 +3,10 @@ services:
   # Traefik Reverse Proxy
   # ============================================================================
   traefik:
-    image: traefik:v3.0
+    image: traefik:v3.6
     container_name: receipt-manager-traefik
     command:
-      - "--api.insecure=true"  # ⚠️ Only for development! Disable in production
+      - "--api.insecure=true" # ⚠️ Only for development! Disable in production
       - "--api.dashboard=true"
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
@@ -21,7 +21,7 @@ services:
       - "--accesslog.format=json"
     ports:
       - "80:80"
-      - "8080:8080"  # Traefik dashboard (development only)
+      - "8080:8080" # Traefik dashboard (development only)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik.yml:/etc/traefik/traefik.yml:ro
@@ -53,7 +53,7 @@ services:
       - JWT_SECRET=${JWT_SECRET:-change-this-secret-in-production}
       - JWT_ACCESS_TTL=15m
       - JWT_REFRESH_TTL=168h
-      - RUSTFS_ENDPOINT=rustfs:9000
+      - RUSTFS_ENDPOINT=http://rustfs:9000
       - RUSTFS_ACCESS_KEY=rustfsadmin
       - RUSTFS_SECRET_KEY=rustfsadmin
       - RUSTFS_BUCKET=receipts
@@ -77,25 +77,25 @@ services:
     labels:
       # Enable Traefik
       - "traefik.enable=true"
-      
+
       # API Routes
       - "traefik.http.routers.api.rule=PathPrefix(`/api`)"
       - "traefik.http.routers.api.entrypoints=web"
       - "traefik.http.routers.api.service=api"
-      - "traefik.http.routers.api.middlewares=cors,rate-limit-api,compression"
-      
+      - "traefik.http.routers.api.middlewares=cors@file,rate-limit-api@file,compression@file"
+
       # Webhook Routes
       - "traefik.http.routers.webhooks.rule=PathPrefix(`/webhooks`)"
       - "traefik.http.routers.webhooks.entrypoints=web"
       - "traefik.http.routers.webhooks.service=api"
-      - "traefik.http.routers.webhooks.middlewares=rate-limit-webhooks,compression"
-      
+      - "traefik.http.routers.webhooks.middlewares=rate-limit-webhooks@file,compression@file"
+
       # Health Check (no rate limiting)
       - "traefik.http.routers.health.rule=Path(`/health`)"
       - "traefik.http.routers.health.entrypoints=web"
       - "traefik.http.routers.health.service=api"
       - "traefik.http.routers.health.priority=100"
-      
+
       # Service definition
       - "traefik.http.services.api.loadbalancer.server.port=8080"
       - "traefik.http.services.api.loadbalancer.healthcheck.path=/health"
@@ -109,7 +109,9 @@ services:
       rustfs:
         condition: service_healthy
       temporal:
-        condition: service_started
+        condition: service_healthy
+      temporal-create-namespace:
+        condition: service_completed_successfully
     networks:
       - receipt-manager
     restart: unless-stopped
@@ -128,7 +130,7 @@ services:
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/receipt_manager?sslmode=disable
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=${JWT_SECRET:-change-this-secret-in-production}
-      - RUSTFS_ENDPOINT=rustfs:9000
+      - RUSTFS_ENDPOINT=http://rustfs:9000
       - RUSTFS_ACCESS_KEY=rustfsadmin
       - RUSTFS_SECRET_KEY=rustfsadmin
       - RUSTFS_BUCKET=receipts
@@ -158,7 +160,9 @@ services:
       rustfs:
         condition: service_healthy
       temporal:
-        condition: service_started
+        condition: service_healthy
+      temporal-create-namespace:
+        condition: service_completed_successfully
     networks:
       - receipt-manager
     restart: unless-stopped
@@ -257,47 +261,96 @@ services:
     restart: on-failure
 
   # ============================================================================
-  # Temporal Server (Workflow Engine)
+  # Temporal (supported stack: temporalio/server + admin-tools; auto-setup is deprecated
+  # per https://hub.docker.com/r/temporalio/auto-setup — pattern from
+  # https://github.com/temporalio/samples-server/tree/main/compose )
   # ============================================================================
-  temporal:
-    image: temporalio/auto-setup:latest
-    container_name: receipt-manager-temporal
+  temporal-setup:
+    image: temporalio/admin-tools:1.30.1
+    container_name: receipt-manager-temporal-setup
+    restart: on-failure:6
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
-      - DB=postgresql
+      - DB=postgres12
       - DB_PORT=5432
       - POSTGRES_USER=postgres
       - POSTGRES_PWD=postgres
       - POSTGRES_SEEDS=postgres
+      # temporal-sql-tool reads password from SQL_PASSWORD (-p is port, not password)
+      - SQL_PASSWORD=postgres
+    networks:
+      - receipt-manager
+    volumes:
+      - ./temporal/scripts:/scripts:ro
+    entrypoint: ["/bin/sh", "/scripts/setup-postgres.sh"]
+
+  temporal:
+    image: temporalio/server:1.30.1
+    container_name: receipt-manager-temporal
+    depends_on:
+      temporal-setup:
+        condition: service_completed_successfully
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PWD=postgres
+      - POSTGRES_SEEDS=postgres
+      - BIND_ON_IP=0.0.0.0
       - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+    volumes:
+      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
     labels:
       - "traefik.enable=false"
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - receipt-manager
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "7233"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 60
+
+  temporal-create-namespace:
+    image: temporalio/admin-tools:1.30.1
+    container_name: receipt-manager-temporal-namespace
+    restart: on-failure:5
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - DEFAULT_NAMESPACE=default
+    networks:
+      - receipt-manager
+    volumes:
+      - ./temporal/scripts:/scripts:ro
+    entrypoint: ["/bin/sh", "/scripts/create-namespace.sh"]
 
   # ============================================================================
   # Temporal Web UI
   # ============================================================================
   temporal-ui:
-    image: temporalio/ui:latest
+    image: temporalio/ui:2.34.0
     container_name: receipt-manager-temporal-ui
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
-      - TEMPORAL_CORS_ORIGINS=http://localhost:3000,http://localhost:8080
+      # Required when exposing UI under a subpath; do not use StripPrefix (see Temporal docs).
+      - TEMPORAL_UI_PUBLIC_PATH=/temporal
+      - TEMPORAL_DEFAULT_NAMESPACE=default
+      - TEMPORAL_CORS_ORIGINS=http://localhost,http://localhost:3000,http://localhost:8080
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.temporal-ui.rule=PathPrefix(`/temporal`)"
       - "traefik.http.routers.temporal-ui.entrypoints=web"
       - "traefik.http.routers.temporal-ui.service=temporal-ui"
-      - "traefik.http.routers.temporal-ui.middlewares=strip-temporal-prefix"
       - "traefik.http.services.temporal-ui.loadbalancer.server.port=8080"
-      # Strip /temporal prefix before forwarding
-      - "traefik.http.middlewares.strip-temporal-prefix.stripprefix.prefixes=/temporal"
     depends_on:
-      - temporal
+      temporal:
+        condition: service_healthy
     networks:
       - receipt-manager
     restart: unless-stopped
@@ -309,5 +362,9 @@ volumes:
   rustfs_logs:
 
 networks:
+  # Pin name so traefik.yml `providers.docker.network: receipt-manager` matches (Compose
+  # default would be `<project>_receipt-manager`, e.g. bonify_receipt-manager, and Traefik
+  # would not route any Docker backends).
   receipt-manager:
+    name: receipt-manager
     driver: bridge
