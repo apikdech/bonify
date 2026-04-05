@@ -1,3 +1,15 @@
+# Host-interpolated / secrets — overrides keys from backend/.env.docker (Compose wins over env_file).
+x-backend-runtime-env: &backend-runtime-env
+  JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production}
+  LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+  LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+  DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+  DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:-}
+  APP_URL: ${APP_URL:-http://localhost}
+
 services:
   # ============================================================================
   # Traefik Reverse Proxy
@@ -45,35 +57,13 @@ services:
       dockerfile: Dockerfile
     container_name: receipt-manager-api
     command: ["/usr/local/bin/api"]
+    env_file:
+      - ./backend/.env.docker
     environment:
-      - SERVER_PORT=8080
-      - SERVER_ENV=production
-      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/receipt_manager?sslmode=disable
-      - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=${JWT_SECRET:-change-this-secret-in-production}
-      - JWT_ACCESS_TTL=15m
-      - JWT_REFRESH_TTL=168h
-      - RUSTFS_ENDPOINT=http://rustfs:9000
-      - RUSTFS_ACCESS_KEY=rustfsadmin
-      - RUSTFS_SECRET_KEY=rustfsadmin
-      - RUSTFS_BUCKET=receipts
-      - RUSTFS_USE_SSL=false
-      - RUSTFS_REGION=us-east-1
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
-      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
-      - LLM_API_KEY=${LLM_API_KEY:-}
-      - TEMPORAL_HOST=temporal:7233
-      - TEMPORAL_NAMESPACE=default
-      - TEMPORAL_TASK_QUEUE=receipt-tasks
-      - FX_PROVIDER=exchangerate-api
-      - FX_BASE_CURRENCY=USD
-      - FX_REFRESH_CRON=0 0 * * *
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
-      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
-      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
-      - DISCORD_PUBLIC_KEY=${DISCORD_PUBLIC_KEY:-}
-      - APP_URL=${APP_URL:-http://localhost}
-      - OCR_CONFIDENCE_THRESHOLD=0.85
+      <<: *backend-runtime-env
+      SERVER_PORT: "8080"
+      JWT_ACCESS_TTL: 15m
+      JWT_REFRESH_TTL: 168h
     labels:
       # Enable Traefik
       - "traefik.enable=true"
@@ -125,32 +115,10 @@ services:
       dockerfile: Dockerfile
     container_name: receipt-manager-worker
     command: ["/usr/local/bin/worker"]
+    env_file:
+      - ./backend/.env.docker
     environment:
-      - SERVER_ENV=production
-      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/receipt_manager?sslmode=disable
-      - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=${JWT_SECRET:-change-this-secret-in-production}
-      - RUSTFS_ENDPOINT=http://rustfs:9000
-      - RUSTFS_ACCESS_KEY=rustfsadmin
-      - RUSTFS_SECRET_KEY=rustfsadmin
-      - RUSTFS_BUCKET=receipts
-      - RUSTFS_USE_SSL=false
-      - RUSTFS_REGION=us-east-1
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
-      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
-      - LLM_API_KEY=${LLM_API_KEY:-}
-      - TEMPORAL_HOST=temporal:7233
-      - TEMPORAL_NAMESPACE=default
-      - TEMPORAL_TASK_QUEUE=receipt-tasks
-      - FX_PROVIDER=exchangerate-api
-      - FX_BASE_CURRENCY=USD
-      - FX_REFRESH_CRON=0 0 * * *
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
-      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
-      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
-      - DISCORD_PUBLIC_KEY=${DISCORD_PUBLIC_KEY:-}
-      - APP_URL=${APP_URL:-http://localhost}
-      - OCR_CONFIDENCE_THRESHOLD=0.85
+      <<: *backend-runtime-env
     # Note: No traefik labels - workers don't expose HTTP
     depends_on:
       postgres:
@@ -289,6 +257,8 @@ services:
   temporal:
     image: temporalio/server:1.30.1
     container_name: receipt-manager-temporal
+    ports:
+      - "7233:7233"
     depends_on:
       temporal-setup:
         condition: service_completed_successfully
@@ -334,7 +304,7 @@ services:
   # Temporal Web UI
   # ============================================================================
   temporal-ui:
-    image: temporalio/ui:2.34.0
+    image: temporalio/ui:2.48.1
     container_name: receipt-manager-temporal-ui
     environment:
       - TEMPORAL_ADDRESS=temporal:7233

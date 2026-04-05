@@ -28,6 +28,44 @@ docker-compose ps
 # Temporal UI at http://localhost:8088
 ```
 
+### System requirements (full Docker Compose stack)
+
+These numbers help you judge laptop or VM sizing. They come from a lightly loaded dev stack (`docker stats` and `docker compose images` on Linux amd64); real usage grows with data, traffic, and LLM calls.
+
+**Disk (images)**  
+Pulling the default compose images is on the order of **~2.4 GB** (compressed layers on disk vary by storage driver). Plan extra space for:
+
+- PostgreSQL and Redis volumes
+- Build cache if you rebuild `api` / `worker` often
+
+**A practical minimum:** **~5 GB** free disk for the stack plus room to grow.
+
+**Memory (running containers)**  
+Typical resident usage per service when idle or lightly used:
+
+| Container | Approx. memory |
+|-----------|----------------|
+| receipt-manager-api | ~9 MiB |
+| receipt-manager-worker | ~9 MiB |
+| receipt-manager-traefik | ~23 MiB |
+| receipt-manager-redis | ~4 MiB |
+| receipt-manager-temporal-ui | ~28 MiB |
+| receipt-manager-temporal | ~90–95 MiB |
+| receipt-manager-postgres | ~150 MiB |
+| receipt-manager-rustfs | ~100–105 MiB |
+
+The long-running services above sum to roughly **400–450 MiB** in that scenario. Temporal and PostgreSQL use more under load; RustFS grows with stored objects.
+
+**Recommendations**
+
+| Resource | Suggested |
+|----------|-----------|
+| **RAM** | **2 GB+** for the host running the full stack (containers + Docker + OS). **4 GB+** is more comfortable. |
+| **CPU** | **2 cores** recommended; **1 core** can work for local dev if you accept slower startup and occasional Temporal spikes. |
+| **Disk** | **5 GB+** free for images and initial volumes; more for production data and receipts. |
+
+One-off init containers (`temporal-setup`, `temporal-create-namespace`, `rustfs-init`) usually exit after startup; they are not included in the table above.
+
 ### Running Backend and Frontend Locally
 
 If you prefer to run the application code locally while using Docker for dependencies:
