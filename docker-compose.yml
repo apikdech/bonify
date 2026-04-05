@@ -212,21 +212,23 @@ services:
   rustfs:
     image: rustfs/rustfs:latest
     container_name: receipt-manager-rustfs
+    # See https://github.com/rustfs/rustfs/blob/main/docker-compose-simple.yml — use ACCESS_KEY/SECRET_KEY (not ROOT_*).
     environment:
-      RUSTFS_ROOT_USER: rustfsadmin
-      RUSTFS_ROOT_PASSWORD: rustfsadmin
-      RUSTFS_BROWSER: "on"
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+      RUSTFS_CONSOLE_ENABLE: "true"
     volumes:
       - rustfs_data:/data
       - rustfs_logs:/logs
     labels:
       - "traefik.enable=false"
+    # GET / returns 403 without auth; /health is the documented liveness URL (curl -f would fail on /).
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 30s
     networks:
       - receipt-manager
     restart: unless-stopped
@@ -234,17 +236,18 @@ services:
   # ============================================================================
   # Create RustFS bucket on startup
   # ============================================================================
+  # MinIO Client image (S3 API); RustFS does not publish rustfs/mc — any S3 client works.
   rustfs-init:
-    image: rustfs/mc:latest
+    image: minio/mc:latest
     container_name: receipt-manager-rustfs-init
     depends_on:
       rustfs:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      /usr/bin/mc config host add myrustfs http://rustfs:9000 rustfsadmin rustfsadmin;
-      /usr/bin/mc mb myrustfs/receipts || true;
-      /usr/bin/mc anonymous set download myrustfs/receipts;
+      mc alias set myrustfs http://rustfs:9000 rustfsadmin rustfsadmin &&
+      mc mb --ignore-existing myrustfs/receipts &&
+      mc anonymous set download myrustfs/receipts;
       exit 0;
       "
     labels:
