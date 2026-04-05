@@ -24,7 +24,7 @@ docker-compose up -d
 docker-compose ps
 
 # The API will be available at http://localhost:8080
-# MinIO Console at http://localhost:9001 (minioadmin/minioadmin)
+# RustFS Console at http://localhost:9001 (rustfsadmin/rustfsadmin)
 # Temporal UI at http://localhost:8088
 ```
 
@@ -34,7 +34,7 @@ If you prefer to run the application code locally while using Docker for depende
 
 ```bash
 # 1. Start only the infrastructure services
-docker-compose up -d postgres redis minio temporal temporal-ui
+docker-compose up -d postgres redis rustfs temporal temporal-ui
 
 # 2. Wait for services to be ready
 sleep 10
@@ -104,10 +104,10 @@ receipt-manager/
          │
     ┌────┴────┬────────┬────────┐
     ▼         ▼        ▼        ▼
-┌───────┐ ┌────────┐ ┌────────┐ ┌──────────┐
-│Postgre│ │  LLM   │ │  MinIO │ │  Redis   │
+┌───────┐ ┌────────┐ ┌─────────┐ ┌──────────┐
+│Postgre│ │  LLM   │ │ RustFS │ │  Redis   │
 │SQL    │ │ Vision │ │  /S3   │ │          │
-└───────┘ └────────┘ └────────┘ └──────────┘
+└───────┘ └────────┘ └─────────┘ └──────────┘
          │              ▲
          └──────────────┘
               Temporal
@@ -121,7 +121,7 @@ The `docker-compose.yml` includes:
 |---------|------|-------------|
 | postgres | 5432 | PostgreSQL 15 database |
 | redis | 6379 | Redis cache & sessions |
-| minio | 9000/9001 | S3-compatible object storage |
+| rustfs | 9000/9001 | S3-compatible object storage (RustFS) |
 | temporal | 7233 | Workflow engine (Temporal) |
 | temporal-ui | 8088 | Temporal Web UI |
 
@@ -155,7 +155,7 @@ docker-compose ps
 - **Backend**: Go, Chi router, PostgreSQL, Redis, Temporal
 - **Frontend**: SvelteKit 5, TypeScript, Tailwind CSS, Chart.js
 - **LLM**: OpenAI GPT-4 (configurable: Anthropic, Google, Ollama)
-- **Storage**: MinIO/S3 for receipt images
+- **Storage**: RustFS (S3-compatible) for receipt images
 - **Bots**: Telegram Bot API, Discord Bot API
 
 ## Documentation
@@ -229,7 +229,7 @@ See [frontend/README.md](./frontend/README.md) for detailed development guide.
 # Check if ports are already in use
 lsof -i :5432  # PostgreSQL
 lsof -i :6379  # Redis
-lsof -i :9000  # MinIO
+lsof -i :9000  # RustFS
 lsof -i :8080  # Backend
 
 # Reset everything

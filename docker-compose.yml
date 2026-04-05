@@ -37,39 +37,40 @@ services:
     networks:
       - receipt-manager
 
-  # MinIO Object Storage
-  minio:
-    image: minio/minio:latest
-    container_name: receipt-manager-minio
+  # RustFS Object Storage (S3-compatible)
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: receipt-manager-rustfs
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      RUSTFS_ROOT_USER: rustfsadmin
+      RUSTFS_ROOT_PASSWORD: rustfsadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9000:9000"  # S3 API
+      - "9001:9001"  # Web Console
     volumes:
-      - minio_data:/data
-    command: server /data --console-address ":9001"
+      - rustfs_data:/data
+      - rustfs_logs:/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 5s
+      test: ["CMD", "curl", "-f", "http://localhost:9000/"]
+      interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     networks:
       - receipt-manager
 
-  # Create MinIO bucket on startup
-  minio-init:
-    image: minio/mc:latest
-    container_name: receipt-manager-minio-init
+  # Create RustFS bucket on startup
+  rustfs-init:
+    image: rustfs/mc:latest
+    container_name: receipt-manager-rustfs-init
     depends_on:
-      minio:
+      rustfs:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      /usr/bin/mc config host add myminio http://minio:9000 minioadmin minioadmin;
-      /usr/bin/mc mb myminio/receipts || true;
-      /usr/bin/mc anonymous set download myminio/receipts;
+      /usr/bin/mc config host add myrustfs http://rustfs:9000 rustfsadmin rustfsadmin;
+      /usr/bin/mc mb myrustfs/receipts || true;
+      /usr/bin/mc anonymous set download myrustfs/receipts;
       exit 0;
       "
     networks:
@@ -111,7 +112,8 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  minio_data:
+  rustfs_data:
+  rustfs_logs:
 
 networks:
   receipt-manager:
