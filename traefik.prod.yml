@@ -1,0 +1,91 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+api:
+  dashboard: true
+  # In production, disable insecure mode and use basic auth
+  insecure: false
+
+ping:
+  entryPoint: "ping"
+
+log:
+  level: WARN
+  format: json
+
+accessLog:
+  format: json
+  bufferingSize: 100
+
+entryPoints:
+  ping:
+    address: ":8082"
+  
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: letsencrypt
+        options: default
+  
+  # Temporal UI (secured)
+  temporal:
+    address: ":8088"
+
+providers:
+  docker:
+    exposedByDefault: false
+    network: receipt-manager
+    watch: true
+  
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: ${ACME_EMAIL:-admin@example.com}
+      storage: /letsencrypt/acme.json
+      tlsChallenge: {}
+
+serversTransport:
+  insecureSkipVerify: false
+
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      cipherSuites:
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
+      curvePreferences:
+        - CurveP521
+        - CurveP384
+        - CurveP256
+      sniStrict: true
+
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addServicesLabels: true
+    addRoutersLabels: true
+    buckets:
+      - 0.1
+      - 0.3
+      - 1.2
+      - 5.0

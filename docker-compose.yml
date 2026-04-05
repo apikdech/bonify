@@ -1,18 +1,187 @@
 version: '3.8'
 
 services:
+  # ============================================================================
+  # Traefik Reverse Proxy
+  # ============================================================================
+  traefik:
+    image: traefik:v3.0
+    container_name: receipt-manager-traefik
+    command:
+      - "--api.insecure=true"  # ⚠️ Only for development! Disable in production
+      - "--api.dashboard=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.ping.address=:8082"
+      - "--ping=true"
+      - "--log.level=INFO"
+      - "--log.format=json"
+      - "--accesslog=true"
+      - "--accesslog.format=json"
+    ports:
+      - "80:80"
+      - "8080:8080"  # Traefik dashboard (development only)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+    networks:
+      - receipt-manager
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ============================================================================
+  # Receipt Manager Backend API
+  # ============================================================================
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: receipt-manager-api
+    command: ["/usr/local/bin/api"]
+    environment:
+      - SERVER_PORT=8080
+      - SERVER_ENV=production
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/receipt_manager?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-change-this-secret-in-production}
+      - JWT_ACCESS_TTL=15m
+      - JWT_REFRESH_TTL=168h
+      - RUSTFS_ENDPOINT=rustfs:9000
+      - RUSTFS_ACCESS_KEY=rustfsadmin
+      - RUSTFS_SECRET_KEY=rustfsadmin
+      - RUSTFS_BUCKET=receipts
+      - RUSTFS_USE_SSL=false
+      - RUSTFS_REGION=us-east-1
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - TEMPORAL_HOST=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - TEMPORAL_TASK_QUEUE=receipt-tasks
+      - FX_PROVIDER=exchangerate-api
+      - FX_BASE_CURRENCY=USD
+      - FX_REFRESH_CRON=0 0 * * *
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - DISCORD_PUBLIC_KEY=${DISCORD_PUBLIC_KEY:-}
+      - APP_URL=${APP_URL:-http://localhost}
+      - OCR_CONFIDENCE_THRESHOLD=0.85
+    labels:
+      # Enable Traefik
+      - "traefik.enable=true"
+      
+      # API Routes
+      - "traefik.http.routers.api.rule=PathPrefix(`/api`)"
+      - "traefik.http.routers.api.entrypoints=web"
+      - "traefik.http.routers.api.service=api"
+      - "traefik.http.routers.api.middlewares=cors,rate-limit-api,compression"
+      
+      # Webhook Routes
+      - "traefik.http.routers.webhooks.rule=PathPrefix(`/webhooks`)"
+      - "traefik.http.routers.webhooks.entrypoints=web"
+      - "traefik.http.routers.webhooks.service=api"
+      - "traefik.http.routers.webhooks.middlewares=rate-limit-webhooks,compression"
+      
+      # Health Check (no rate limiting)
+      - "traefik.http.routers.health.rule=Path(`/health`)"
+      - "traefik.http.routers.health.entrypoints=web"
+      - "traefik.http.routers.health.service=api"
+      - "traefik.http.routers.health.priority=100"
+      
+      # Service definition
+      - "traefik.http.services.api.loadbalancer.server.port=8080"
+      - "traefik.http.services.api.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.api.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.api.loadbalancer.healthcheck.timeout=5s"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    networks:
+      - receipt-manager
+    restart: unless-stopped
+
+  # ============================================================================
+  # Receipt Manager Temporal Worker
+  # ============================================================================
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: receipt-manager-worker
+    command: ["/usr/local/bin/worker"]
+    environment:
+      - SERVER_ENV=production
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/receipt_manager?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-change-this-secret-in-production}
+      - RUSTFS_ENDPOINT=rustfs:9000
+      - RUSTFS_ACCESS_KEY=rustfsadmin
+      - RUSTFS_SECRET_KEY=rustfsadmin
+      - RUSTFS_BUCKET=receipts
+      - RUSTFS_USE_SSL=false
+      - RUSTFS_REGION=us-east-1
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - TEMPORAL_HOST=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - TEMPORAL_TASK_QUEUE=receipt-tasks
+      - FX_PROVIDER=exchangerate-api
+      - FX_BASE_CURRENCY=USD
+      - FX_REFRESH_CRON=0 0 * * *
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - DISCORD_PUBLIC_KEY=${DISCORD_PUBLIC_KEY:-}
+      - APP_URL=${APP_URL:-http://localhost}
+      - OCR_CONFIDENCE_THRESHOLD=0.85
+    # Note: No traefik labels - workers don't expose HTTP
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    networks:
+      - receipt-manager
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+
+  # ============================================================================
   # PostgreSQL Database
+  # ============================================================================
   postgres:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     container_name: receipt-manager-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: receipt_manager
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    labels:
+      # Disable Traefik for this service
+      - "traefik.enable=false"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -20,15 +189,18 @@ services:
       retries: 5
     networks:
       - receipt-manager
+    restart: unless-stopped
 
+  # ============================================================================
   # Redis Cache
+  # ============================================================================
   redis:
     image: redis:7-alpine
     container_name: receipt-manager-redis
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
+    labels:
+      - "traefik.enable=false"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -36,20 +208,23 @@ services:
       retries: 5
     networks:
       - receipt-manager
+    restart: unless-stopped
 
+  # ============================================================================
   # RustFS Object Storage (S3-compatible)
+  # ============================================================================
   rustfs:
     image: rustfs/rustfs:latest
     container_name: receipt-manager-rustfs
     environment:
       RUSTFS_ROOT_USER: rustfsadmin
       RUSTFS_ROOT_PASSWORD: rustfsadmin
-    ports:
-      - "9000:9000"  # S3 API
-      - "9001:9001"  # Web Console
+      RUSTFS_BROWSER: "on"
     volumes:
       - rustfs_data:/data
       - rustfs_logs:/logs
+    labels:
+      - "traefik.enable=false"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/"]
       interval: 10s
@@ -58,8 +233,11 @@ services:
       start_period: 10s
     networks:
       - receipt-manager
+    restart: unless-stopped
 
+  # ============================================================================
   # Create RustFS bucket on startup
+  # ============================================================================
   rustfs-init:
     image: rustfs/mc:latest
     container_name: receipt-manager-rustfs-init
@@ -73,10 +251,15 @@ services:
       /usr/bin/mc anonymous set download myrustfs/receipts;
       exit 0;
       "
+    labels:
+      - "traefik.enable=false"
     networks:
       - receipt-manager
+    restart: on-failure
 
+  # ============================================================================
   # Temporal Server (Workflow Engine)
+  # ============================================================================
   temporal:
     image: temporalio/auto-setup:latest
     container_name: receipt-manager-temporal
@@ -87,27 +270,38 @@ services:
       - POSTGRES_PWD=postgres
       - POSTGRES_SEEDS=postgres
       - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
-    ports:
-      - "7233:7233"
+    labels:
+      - "traefik.enable=false"
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - receipt-manager
+    restart: unless-stopped
 
+  # ============================================================================
   # Temporal Web UI
+  # ============================================================================
   temporal-ui:
     image: temporalio/ui:latest
     container_name: receipt-manager-temporal-ui
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
-      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
-    ports:
-      - "8088:8080"
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000,http://localhost:8080
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.temporal-ui.rule=PathPrefix(`/temporal`)"
+      - "traefik.http.routers.temporal-ui.entrypoints=web"
+      - "traefik.http.routers.temporal-ui.service=temporal-ui"
+      - "traefik.http.routers.temporal-ui.middlewares=strip-temporal-prefix"
+      - "traefik.http.services.temporal-ui.loadbalancer.server.port=8080"
+      # Strip /temporal prefix before forwarding
+      - "traefik.http.middlewares.strip-temporal-prefix.stripprefix.prefixes=/temporal"
     depends_on:
       - temporal
     networks:
       - receipt-manager
+    restart: unless-stopped
 
 volumes:
   postgres_data:

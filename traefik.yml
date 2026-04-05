@@ -1,0 +1,66 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+api:
+  dashboard: true
+  insecure: true  # Only for development! Disable in production
+
+ping:
+  entryPoint: "ping"
+
+log:
+  level: INFO
+  format: json
+
+accessLog:
+  format: json
+
+entryPoints:
+  ping:
+    address: ":8082"
+  
+  web:
+    address: ":80"
+    # Redirect HTTP to HTTPS in production
+    # http:
+    #   redirections:
+    #     entryPoint:
+    #       to: websecure
+    #       scheme: https
+    #       permanent: true
+  
+  websecure:
+    address: ":443"
+  
+  # Temporal UI (optional, only if exposing publicly)
+  temporal:
+    address: ":8088"
+
+providers:
+  docker:
+    exposedByDefault: false
+    network: receipt-manager
+    watch: true
+  
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+# Certificate Resolvers (Let's Encrypt) - Uncomment for production
+# certificatesResolvers:
+#   letsencrypt:
+#     acme:
+#       email: your-email@example.com
+#       storage: /letsencrypt/acme.json
+#       tlsChallenge: {}
+#       # Or use HTTP challenge:
+#       # httpChallenge:
+#       #   entryPoint: web
+
+# Tracing and Metrics (optional)
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addServicesLabels: true
+    addRoutersLabels: true
