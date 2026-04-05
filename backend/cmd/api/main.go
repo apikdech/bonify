@@ -198,6 +198,7 @@ func main() {
 
 		r.Get("/", receiptHandler.List)
 		r.Post("/", receiptHandler.Create)
+		r.Get("/export", receiptHandler.ExportCSV)
 		r.Get("/{id}", receiptHandler.Get)
 		r.Patch("/{id}", receiptHandler.Update)
 		r.Delete("/{id}", receiptHandler.Delete)

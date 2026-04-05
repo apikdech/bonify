@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -19,6 +22,11 @@ import (
 type ReceiptHandler struct {
 	cfg            *config.Config
 	receiptService *service.ReceiptService
+}
+
+// ReceiptServiceInterface defines the interface for receipt service operations
+type ReceiptServiceInterface interface {
+	ListAll(ctx context.Context, filter *model.ListReceiptsFilter) ([]*model.Receipt, error)
 }
 
 // NewReceiptHandler creates a new receipt handler
@@ -443,4 +451,135 @@ func isValidFeeType(feeType model.FeeType) bool {
 	default:
 		return false
 	}
+}
+
+// ExportCSV handles GET /receipts/export?from=&to=&format=csv
+func (h *ReceiptHandler) ExportCSV(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get user ID from context
+	userID := middleware.GetUserID(r.Context())
+	if userID == uuid.Nil {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Build filter
+	filter := &model.ListReceiptsFilter{
+		UserID: userID,
+	}
+
+	// Parse date range
+	if from := r.URL.Query().Get("from"); from != "" {
+		t, err := time.Parse(time.RFC3339, from)
+		if err != nil {
+			http.Error(w, `{"error": "invalid from date format"}`, http.StatusBadRequest)
+			return
+		}
+		filter.FromDate = &t
+	}
+	if to := r.URL.Query().Get("to"); to != "" {
+		t, err := time.Parse(time.RFC3339, to)
+		if err != nil {
+			http.Error(w, `{"error": "invalid to date format"}`, http.StatusBadRequest)
+			return
+		}
+		filter.ToDate = &t
+	}
+
+	// Get all receipts (no pagination)
+	receipts, err := h.receiptService.ListAll(r.Context(), filter)
+	if err != nil {
+		http.Error(w, `{"error": "failed to export receipts"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Set headers for CSV download
+	w.Header().Set("Content-Type", "text/csv")
+	filename := fmt.Sprintf("receipts_%s.csv", time.Now().Format("2006-01-02"))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+
+	// Write CSV
+	writer := csv.NewWriter(w)
+	defer writer.Flush()
+
+	// Write header
+	headers := []string{"date", "shop", "items", "total", "currency", "tags", "source", "status"}
+	if err := writer.Write(headers); err != nil {
+		http.Error(w, `{"error": "failed to write CSV header"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Write data rows
+	for _, receipt := range receipts {
+		row := h.formatReceiptForCSV(receipt)
+		if err := writer.Write(row); err != nil {
+			// Can't write error after headers sent, just log
+			return
+		}
+	}
+}
+
+// formatReceiptForCSV formats a receipt as a CSV row
+func (h *ReceiptHandler) formatReceiptForCSV(receipt *model.Receipt) []string {
+	// Date - use receipt_date if available, otherwise created_at
+	date := receipt.CreatedAt.Format("2006-01-02")
+	if receipt.ReceiptDate != nil {
+		date = receipt.ReceiptDate.Format("2006-01-02")
+	}
+
+	// Shop - use title if available
+	shop := ""
+	if receipt.Title != nil {
+		shop = *receipt.Title
+	}
+
+	// Items - flatten all item names with quantities
+	items := ""
+	if len(receipt.Items) > 0 {
+		itemParts := make([]string, 0, len(receipt.Items))
+		for _, item := range receipt.Items {
+			itemParts = append(itemParts, fmt.Sprintf("%s (%.2f x %.2f)", item.Name, item.Quantity, item.UnitPrice))
+		}
+		items = fmt.Sprintf("\"%s\"", joinStrings(itemParts, "; "))
+	}
+
+	// Total
+	total := fmt.Sprintf("%.2f", receipt.Total)
+
+	// Currency
+	currency := receipt.Currency
+
+	// Tags - comma-separated tag names
+	tags := ""
+	if len(receipt.Tags) > 0 {
+		tagNames := make([]string, 0, len(receipt.Tags))
+		for _, tag := range receipt.Tags {
+			tagNames = append(tagNames, tag.Name)
+		}
+		tags = joinStrings(tagNames, ", ")
+	}
+
+	// Source
+	source := string(receipt.Source)
+
+	// Status
+	status := string(receipt.Status)
+
+	return []string{date, shop, items, total, currency, tags, source, status}
+}
+
+// joinStrings joins a slice of strings with a separator
+func joinStrings(strs []string, sep string) string {
+	result := ""
+	for i, s := range strs {
+		if i > 0 {
+			result += sep
+		}
+		result += s
+	}
+	return result
 }

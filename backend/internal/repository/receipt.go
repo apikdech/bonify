@@ -195,6 +195,98 @@ func (r *ReceiptRepo) List(ctx context.Context, filter *model.ListReceiptsFilter
 	return receipts, total, nil
 }
 
+// ListAll retrieves all receipts with filters (no pagination)
+func (r *ReceiptRepo) ListAll(ctx context.Context, filter *model.ListReceiptsFilter) ([]*model.Receipt, int64, error) {
+	// Build the WHERE clause
+	whereClause := "WHERE user_id = $1"
+	args := []interface{}{filter.UserID}
+	argCount := 1
+
+	if filter.Status != nil {
+		argCount++
+		whereClause += fmt.Sprintf(" AND status = $%d", argCount)
+		args = append(args, *filter.Status)
+	}
+
+	if filter.FromDate != nil {
+		argCount++
+		whereClause += fmt.Sprintf(" AND receipt_date >= $%d", argCount)
+		args = append(args, *filter.FromDate)
+	}
+
+	if filter.ToDate != nil {
+		argCount++
+		whereClause += fmt.Sprintf(" AND receipt_date <= $%d", argCount)
+		args = append(args, *filter.ToDate)
+	}
+
+	if filter.Query != nil && *filter.Query != "" {
+		argCount++
+		whereClause += fmt.Sprintf(" AND (title ILIKE $%d OR notes ILIKE $%d)", argCount, argCount)
+		args = append(args, "%"+*filter.Query+"%")
+	}
+
+	if filter.TagID != nil {
+		argCount++
+		whereClause += fmt.Sprintf(" AND id IN (SELECT receipt_id FROM receipt_tags WHERE tag_id = $%d)", argCount)
+		args = append(args, *filter.TagID)
+	}
+
+	// Count query
+	countQuery := "SELECT COUNT(*) FROM receipts " + whereClause
+	var total int64
+	err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count receipts: %w", err)
+	}
+
+	// Data query without pagination
+	dataQuery := `
+		SELECT id, user_id, title, source, image_url, ocr_confidence, currency, payment_method,
+		       subtotal, total, status, notes, receipt_date, paid_by, created_at, updated_at
+		FROM receipts
+	` + whereClause + " ORDER BY created_at DESC"
+
+	rows, err := r.db.Query(ctx, dataQuery, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list receipts: %w", err)
+	}
+	defer rows.Close()
+
+	var receipts []*model.Receipt
+	for rows.Next() {
+		receipt := &model.Receipt{}
+		err := rows.Scan(
+			&receipt.ID,
+			&receipt.UserID,
+			&receipt.Title,
+			&receipt.Source,
+			&receipt.ImageURL,
+			&receipt.OCRConfidence,
+			&receipt.Currency,
+			&receipt.PaymentMethod,
+			&receipt.Subtotal,
+			&receipt.Total,
+			&receipt.Status,
+			&receipt.Notes,
+			&receipt.ReceiptDate,
+			&receipt.PaidBy,
+			&receipt.CreatedAt,
+			&receipt.UpdatedAt,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan receipt: %w", err)
+		}
+		receipts = append(receipts, receipt)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating receipts: %w", err)
+	}
+
+	return receipts, total, nil
+}
+
 // Update updates a receipt's fields
 func (r *ReceiptRepo) Update(ctx context.Context, receipt *model.Receipt) (*model.Receipt, error) {
 	query := `

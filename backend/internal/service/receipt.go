@@ -343,6 +343,33 @@ func (s *ReceiptService) Delete(ctx context.Context, receiptID uuid.UUID, userID
 	return s.receiptRepo.Delete(ctx, receiptID)
 }
 
+// ListAll lists all receipts for a user with filters (no pagination)
+func (s *ReceiptService) ListAll(ctx context.Context, filter *model.ListReceiptsFilter) ([]*model.Receipt, error) {
+	receipts, _, err := s.receiptRepo.ListAll(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list receipts: %w", err)
+	}
+
+	// Load items, fees, and tags for each receipt
+	for _, receipt := range receipts {
+		var err error
+		receipt.Items, err = s.receiptRepo.GetItems(ctx, receipt.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load items for receipt %s: %w", receipt.ID, err)
+		}
+		receipt.Fees, err = s.receiptRepo.GetFees(ctx, receipt.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load fees for receipt %s: %w", receipt.ID, err)
+		}
+		receipt.Tags, err = s.receiptRepo.GetTags(ctx, receipt.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load tags for receipt %s: %w", receipt.ID, err)
+		}
+	}
+
+	return receipts, nil
+}
+
 // calculateItems calculates subtotals for items
 func calculateItems(inputs []model.ReceiptItemInput) ([]model.ReceiptItem, float64) {
 	items := make([]model.ReceiptItem, 0, len(inputs))
