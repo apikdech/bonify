@@ -14,6 +14,9 @@ export interface User {
 	email: string;
 	role: string;
 	home_currency: string;
+	notify_on_parse: boolean;
+	notify_on_pending_review: boolean;
+	notify_budget_alerts: boolean;
 }
 
 export interface ReceiptItem {
@@ -153,6 +156,16 @@ export interface UpdateBudgetRequest {
 
 export interface BudgetListParams {
 	month?: string;
+}
+
+// ============ User Interfaces ============
+
+export interface UpdateUserRequest {
+	name?: string;
+	email?: string;
+	notify_on_parse?: boolean;
+	notify_on_pending_review?: boolean;
+	notify_budget_alerts?: boolean;
 }
 
 // ============ Analytics Interfaces ============
@@ -457,6 +470,18 @@ class APIClient {
 			const queryParams = new URLSearchParams();
 			queryParams.set('month', month);
 			const response = await this.fetch(`/budgets/status?${queryParams}`, { method: 'GET' });
+			return response.json();
+		}
+	};
+
+	// ============ User Methods ============
+
+	user = {
+		update: async (data: UpdateUserRequest): Promise<User> => {
+			const response = await this.fetch('/users/me', {
+				method: 'PATCH',
+				body: JSON.stringify(data)
+			});
 			return response.json();
 		}
 	};

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
-	import { Home, Receipt, Inbox, BarChart3, Tag, Wallet, LogOut } from 'lucide-svelte';
+	import { Home, Receipt, Inbox, BarChart3, Tag, Wallet, Settings, LogOut } from 'lucide-svelte';
 	import auth from '$lib/auth';
 	import { pendingCountStore } from '$lib/stores';
 
@@ -12,7 +12,8 @@
 		{ path: '/queue', label: 'Queue', icon: Inbox, showBadge: true },
 		{ path: '/analytics', label: 'Analytics', icon: BarChart3 },
 		{ path: '/tags', label: 'Tags', icon: Tag },
-		{ path: '/settings/budgets', label: 'Budgets', icon: Wallet }
+		{ path: '/settings/budgets', label: 'Budgets', icon: Wallet },
+		{ path: '/settings', label: 'Settings', icon: Settings }
 	];
 
 	// Mobile nav items (subset for space)
