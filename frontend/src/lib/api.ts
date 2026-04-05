@@ -119,6 +119,42 @@ export interface UpdateTagRequest {
 	color?: string;
 }
 
+// ============ Budget Interfaces ============
+
+export interface Budget {
+	id: string;
+	user_id: string;
+	tag_id: string | null;
+	month: string;  // YYYY-MM format
+	amount_limit: number;
+}
+
+export interface BudgetStatus {
+	budget_id: string;
+	tag_id: string | null;
+	month: string;
+	amount_limit: number;
+	spent: number;
+	percentage: number;
+	remaining: number;
+}
+
+export interface CreateBudgetRequest {
+	tag_id?: string | null;
+	month: string;
+	amount_limit: number;
+}
+
+export interface UpdateBudgetRequest {
+	tag_id?: string | null;
+	month?: string;
+	amount_limit?: number;
+}
+
+export interface BudgetListParams {
+	month?: string;
+}
+
 // ============ Analytics Interfaces ============
 
 export interface AnalyticsSummary {
@@ -381,6 +417,47 @@ class APIClient {
 
 		delete: async (id: string): Promise<void> => {
 			await this.fetch(`/tags/${id}`, { method: 'DELETE' });
+		}
+	};
+
+	// ============ Budget Methods ============
+
+	budgets = {
+		list: async (params: BudgetListParams = {}): Promise<Budget[]> => {
+			const queryParams = new URLSearchParams();
+			if (params.month) queryParams.set('month', params.month);
+			
+			const query = queryParams.toString();
+			const endpoint = query ? `/budgets?${query}` : '/budgets';
+			const response = await this.fetch(endpoint, { method: 'GET' });
+			return response.json();
+		},
+
+		create: async (data: CreateBudgetRequest): Promise<Budget> => {
+			const response = await this.fetch('/budgets', {
+				method: 'POST',
+				body: JSON.stringify(data)
+			});
+			return response.json();
+		},
+
+		update: async (id: string, data: UpdateBudgetRequest): Promise<Budget> => {
+			const response = await this.fetch(`/budgets/${id}`, {
+				method: 'PATCH',
+				body: JSON.stringify(data)
+			});
+			return response.json();
+		},
+
+		delete: async (id: string): Promise<void> => {
+			await this.fetch(`/budgets/${id}`, { method: 'DELETE' });
+		},
+
+		status: async (month: string): Promise<BudgetStatus[]> => {
+			const queryParams = new URLSearchParams();
+			queryParams.set('month', month);
+			const response = await this.fetch(`/budgets/status?${queryParams}`, { method: 'GET' });
+			return response.json();
 		}
 	};
 

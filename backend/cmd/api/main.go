@@ -76,6 +76,7 @@ func main() {
 	tagRepo := repository.NewTagRepo(database.Pool)
 	fxRepo := repository.NewFXRepo(database.Pool)
 	analyticsRepo := repository.NewAnalyticsRepo(database.Pool)
+	budgetRepo := repository.NewBudgetRepo(database.Pool)
 	logger.Info("Repositories initialized")
 
 	// Initialize all services
@@ -84,6 +85,7 @@ func main() {
 	tagService := service.NewTagService(tagRepo)
 	_ = service.NewFXService(fxRepo) // Reserved for FX sync workflow
 	analyticsService := service.NewAnalyticsService(analyticsRepo, fxRepo, userRepo)
+	budgetService := service.NewBudgetService(budgetRepo)
 	storageService, err := service.NewStorageService(cfg)
 	if err != nil {
 		logger.Error("Failed to initialize storage service", "error", err)
@@ -145,6 +147,7 @@ func main() {
 	receiptHandler := handler.NewReceiptHandler(cfg, receiptService)
 	tagHandler := handler.NewTagHandler(cfg, tagService)
 	analyticsHandler := handler.NewAnalyticsHandler(cfg, analyticsService)
+	budgetHandler := handler.NewBudgetHandler(cfg, budgetService, budgetRepo)
 	logger.Info("Handlers initialized")
 
 	// Setup Chi router with middleware
@@ -227,6 +230,18 @@ func main() {
 		r.Get("/by-tag", analyticsHandler.ByTag)
 		r.Get("/by-shop", analyticsHandler.ByShop)
 		r.Get("/insights", analyticsHandler.Insights)
+	})
+
+	// Budget routes (protected + rate limited)
+	r.Route("/api/v1/budgets", func(r chi.Router) {
+		r.Use(appmiddleware.JWTAuth(cfg))
+		r.Use(appmiddleware.RateLimit(redisClient, 60, time.Minute))
+
+		r.Get("/", budgetHandler.List)
+		r.Post("/", budgetHandler.Create)
+		r.Patch("/{id}", budgetHandler.Update)
+		r.Delete("/{id}", budgetHandler.Delete)
+		r.Get("/status", budgetHandler.GetStatus)
 	})
 
 	// Telegram webhook route (public - uses secret token for auth)
