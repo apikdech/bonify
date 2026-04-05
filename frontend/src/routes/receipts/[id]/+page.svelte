@@ -2,33 +2,36 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { api, type Receipt, type Tag } from '$lib/api';
+	import { api, type Receipt, type Tag, type ReceiptSplit, type ReceiptSplitParticipant } from '$lib/api';
 	import { toastStore } from '$lib/stores';
-	import {
-		ArrowLeft,
-		Edit,
-		Trash2,
-		Check,
-		X,
-		Receipt as ReceiptIcon,
-		Image as ImageIcon,
-		Tag as TagIcon,
-		Plus,
-		Bot,
-		RotateCcw,
-		Loader2,
-		AlertCircle,
-		FileText,
-		MessageCircle,
-		Smartphone,
-		Calendar,
-		CreditCard,
-		Coins,
-		CheckCircle,
-		XCircle,
-		Clock,
-		AlertTriangle
-	} from 'lucide-svelte';
+import {
+	ArrowLeft,
+	Edit,
+	Trash2,
+	Check,
+	X,
+	Receipt as ReceiptIcon,
+	Image as ImageIcon,
+	Tag as TagIcon,
+	Plus,
+	Bot,
+	RotateCcw,
+	Loader2,
+	AlertCircle,
+	FileText,
+	MessageCircle,
+	Smartphone,
+	Calendar,
+	CreditCard,
+	Coins,
+	CheckCircle,
+	XCircle,
+	Clock,
+	AlertTriangle,
+	Users,
+	Divide,
+	Wallet
+} from 'lucide-svelte';
 
 	// ============ State ============
 	
@@ -49,6 +52,15 @@
 	let showDeleteConfirm = false;
 	let showTagDropdown = false;
 	let tagDropdownRef: HTMLDivElement;
+	
+	// Split state
+	let splitData: ReceiptSplit | null = null;
+	let isLoadingSplit = false;
+	let showSplitSection = false;
+	let isSplitEditMode = false;
+	let editSplitType: 'even' | 'custom' | 'items' = 'even';
+	let editSplitParticipants: ReceiptSplitParticipant[] = [];
+	let splitFormErrors: Record<string, string> = {};
 	
 	// Edit form state (reused from new receipt page)
 	let editShopName = '';
@@ -286,6 +298,22 @@
 		}
 	}
 	
+	async function fetchSplits() {
+		isLoadingSplit = true;
+		try {
+			splitData = await api.receipts.getSplits(receiptId);
+		} catch (err) {
+			// Split not found is OK - just means no split exists yet
+			if ((err as Error & { status?: number }).status === 404) {
+				splitData = null;
+			} else {
+				console.error('Failed to fetch splits:', err);
+			}
+		} finally {
+			isLoadingSplit = false;
+		}
+	}
+	
 	// ============ Action Handlers ============
 	
 	async function handleConfirm() {
@@ -369,6 +397,159 @@
 	
 	function handleRerunOCR() {
 		toastStore.info('OCR reprocessing is not yet implemented');
+	}
+	
+	// ============ Split Functions ============
+	
+	function enterSplitEditMode() {
+		if (!receipt) return;
+		
+		if (splitData) {
+			// Edit existing split
+			editSplitType = splitData.split_type;
+			editSplitParticipants = [...splitData.participants];
+		} else {
+			// Create new split with default values
+			editSplitType = 'even';
+			editSplitParticipants = [
+				{ name: 'Me', amount: 0, paid: true },
+				{ name: '', amount: 0, paid: false }
+			];
+			calculateEvenSplit();
+		}
+		
+		isSplitEditMode = true;
+	}
+	
+	function cancelSplitEditMode() {
+		isSplitEditMode = false;
+		splitFormErrors = {};
+	}
+	
+	function calculateEvenSplit() {
+		if (!receipt || editSplitType !== 'even' || editSplitParticipants.length === 0) return;
+		
+		const total = receipt.total;
+		const perPerson = Math.floor((total / editSplitParticipants.length) * 100) / 100;
+		const remainder = total - (perPerson * editSplitParticipants.length);
+		
+		editSplitParticipants = editSplitParticipants.map((p, index) => ({
+			...p,
+			amount: index === 0 ? perPerson + remainder : perPerson
+		}));
+	}
+	
+	function addSplitParticipant() {
+		editSplitParticipants = [...editSplitParticipants, { name: '', amount: 0, paid: false }];
+		if (editSplitType === 'even') {
+			calculateEvenSplit();
+		}
+	}
+	
+	function removeSplitParticipant(index: number) {
+		editSplitParticipants = editSplitParticipants.filter((_, i) => i !== index);
+		if (editSplitType === 'even') {
+			calculateEvenSplit();
+		}
+	}
+	
+	function updateSplitParticipant(index: number, field: string, value: string | number | boolean) {
+		editSplitParticipants = editSplitParticipants.map((p, i) => {
+			if (i === index) {
+				return { ...p, [field]: value };
+			}
+			return p;
+		});
+	}
+	
+	function validateSplitForm(): boolean {
+		splitFormErrors = {};
+		
+		if (editSplitParticipants.length === 0) {
+			splitFormErrors.general = 'At least one participant is required';
+		}
+		
+		editSplitParticipants.forEach((p, index) => {
+			if (!p.name.trim()) {
+				splitFormErrors[`participant_${index}_name`] = 'Name is required';
+			}
+			if (p.amount < 0) {
+				splitFormErrors[`participant_${index}_amount`] = 'Amount cannot be negative';
+			}
+		});
+		
+		// Check if amounts sum up to total
+		if (!receipt) return false;
+		const totalAmount = editSplitParticipants.reduce((sum, p) => sum + p.amount, 0);
+		const diff = Math.abs(totalAmount - receipt.total);
+		if (diff > 0.01) {
+			splitFormErrors.total = `Amounts must total ${formatCurrency(receipt.total, receipt.currency)} (currently ${formatCurrency(totalAmount, receipt.currency)})`;
+		}
+		
+		return Object.keys(splitFormErrors).length === 0;
+	}
+	
+	async function handleSaveSplit() {
+		if (!receipt || !validateSplitForm()) {
+			toastStore.error('Please fix the errors in the form');
+			return;
+		}
+		
+		isProcessing = true;
+		
+		try {
+			const participants = editSplitParticipants.map(p => ({
+				name: p.name.trim(),
+				amount: p.amount,
+				paid: p.paid
+			}));
+			
+			if (splitData) {
+				// Update existing split
+				splitData = await api.receipts.updateSplit(receipt.id, {
+					split_type: editSplitType,
+					participants
+				});
+				toastStore.success('Split updated successfully');
+			} else {
+				// Create new split
+				splitData = await api.receipts.createSplit(receipt.id, {
+					split_type: editSplitType,
+					participants
+				});
+				toastStore.success('Split created successfully');
+			}
+			
+			isSplitEditMode = false;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Failed to save split';
+			toastStore.error(message);
+		} finally {
+			isProcessing = false;
+		}
+	}
+	
+	async function handleDeleteSplit() {
+		if (!receipt || !splitData) return;
+		
+		isProcessing = true;
+		try {
+			await api.receipts.deleteSplit(receipt.id);
+			splitData = null;
+			toastStore.success('Split deleted successfully');
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Failed to delete split';
+			toastStore.error(message);
+		} finally {
+			isProcessing = false;
+		}
+	}
+	
+	function toggleSplitSection() {
+		showSplitSection = !showSplitSection;
+		if (showSplitSection && !splitData && !isLoadingSplit) {
+			fetchSplits();
+		}
 	}
 	
 	// ============ Edit Mode Functions ============
@@ -1185,10 +1366,279 @@
 								{/if}
 							</tbody>
 						</table>
+				</div>
+			</section>
+			
+			<!-- Split Section -->
+			<section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+				<div class="px-6 py-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+					<div class="flex items-center gap-2">
+						<Users class="w-5 h-5 text-primary" />
+						<h2 class="text-lg font-semibold text-gray-900">Split Expense</h2>
 					</div>
-				</section>
+					<button
+						on:click={toggleSplitSection}
+						class="text-sm text-primary hover:text-primary/80 font-medium"
+					>
+						{showSplitSection ? 'Hide' : 'Show'}
+					</button>
+				</div>
 				
-				<!-- Tags Section -->
+				{#if showSplitSection}
+					<div class="p-6">
+						{#if isLoadingSplit}
+							<div class="flex items-center justify-center py-8">
+								<Loader2 class="w-6 h-6 text-primary animate-spin" />
+								<span class="ml-2 text-gray-600">Loading split...</span>
+							</div>
+						{:else if isSplitEditMode}
+							<!-- Split Edit Mode -->
+							<div class="space-y-6">
+								<!-- Split Type -->
+								<div>
+									<label class="block text-sm font-medium text-gray-700 mb-3">Split Type</label>
+									<div class="flex gap-3">
+										<button
+											type="button"
+											on:click={() => { editSplitType = 'even'; calculateEvenSplit(); }}
+											class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all {editSplitType === 'even' ? 'border-primary bg-primary/5 text-primary' : 'border-gray-200 hover:border-gray-300'}"
+										>
+											<Divide class="w-4 h-4" />
+											Even Split
+										</button>
+										<button
+											type="button"
+											on:click={() => editSplitType = 'custom'}
+											class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all {editSplitType === 'custom' ? 'border-primary bg-primary/5 text-primary' : 'border-gray-200 hover:border-gray-300'}"
+										>
+											<Wallet class="w-4 h-4" />
+											Custom Amounts
+										</button>
+									</div>
+								</div>
+								
+								<!-- Error Messages -->
+								{#if Object.keys(splitFormErrors).length > 0}
+									<div class="p-3 bg-red-50 border border-red-200 rounded-lg">
+																	{#each Object.entries(splitFormErrors) as [_, error]}
+											<p class="text-sm text-red-600">{error}</p>
+										{/each}
+									</div>
+								{/if}
+								
+								<!-- Participants -->
+								<div>
+									<div class="flex items-center justify-between mb-3">
+										<label class="block text-sm font-medium text-gray-700">Participants</label>
+										<button
+											type="button"
+											on:click={addSplitParticipant}
+											class="flex items-center gap-1 text-sm text-primary hover:text-primary/80"
+										>
+											<Plus class="w-4 h-4" />
+											Add person
+										</button>
+									</div>
+									
+									<div class="space-y-3">
+										{#each editSplitParticipants as participant, index (index)}
+											<div class="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+												<div class="flex-1">
+													<input
+														type="text"
+														placeholder="Name"
+														value={participant.name}
+														on:input={(e) => updateSplitParticipant(index, 'name', e.currentTarget.value)}
+														class="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+														class:border-red-500={splitFormErrors[`participant_${index}_name`]}
+														disabled={isProcessing}
+													/>
+												</div>
+												<div class="w-32">
+													<input
+														type="number"
+														placeholder="Amount"
+														value={participant.amount || ''}
+														on:input={(e) => updateSplitParticipant(index, 'amount', parseFloat(e.currentTarget.value) || 0)}
+														min="0"
+														step="0.01"
+														class="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+														class:border-red-500={splitFormErrors[`participant_${index}_amount`]}
+														disabled={isProcessing || editSplitType === 'even'}
+														title={editSplitType === 'even' ? 'Amount is auto-calculated for even splits' : ''}
+													/>
+												</div>
+												<div class="flex items-center gap-2">
+													<label class="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
+														<input
+															type="checkbox"
+															checked={participant.paid}
+															on:change={(e) => updateSplitParticipant(index, 'paid', e.currentTarget.checked)}
+															disabled={isProcessing}
+															class="rounded border-gray-300 text-primary focus:ring-primary"
+														/>
+														Paid
+													</label>
+												</div>
+												{#if editSplitParticipants.length > 1}
+													<button
+														type="button"
+														on:click={() => removeSplitParticipant(index)}
+														disabled={isProcessing}
+														class="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md"
+													>
+														<X class="w-4 h-4" />
+													</button>
+												{/if}
+											</div>
+										{/each}
+									</div>
+								</div>
+								
+								<!-- Split Summary -->
+								<div class="bg-gray-50 rounded-lg p-4 space-y-2">
+									<div class="flex justify-between text-sm">
+										<span class="text-gray-600">Total Amount:</span>
+										<span class="font-medium text-gray-900">{formatCurrency(receipt?.total || 0, receipt?.currency)}</span>
+									</div>
+									<div class="flex justify-between text-sm">
+										<span class="text-gray-600">Split Total:</span>
+										<span class="font-medium text-gray-900">{formatCurrency(editSplitParticipants.reduce((sum, p) => sum + p.amount, 0), receipt?.currency)}</span>
+									</div>
+										<div class="flex justify-between text-sm pt-2 border-t border-gray-200">
+											<span class="text-gray-600">Paid:</span>
+											<span class="font-medium text-green-600">{formatCurrency(editSplitParticipants.filter((p: ReceiptSplitParticipant) => p.paid).reduce((sum: number, p: ReceiptSplitParticipant) => sum + p.amount, 0), receipt?.currency)}</span>
+										</div>
+										<div class="flex justify-between text-sm">
+											<span class="text-gray-600">Remaining:</span>
+											<span class="font-medium text-orange-600">{formatCurrency(editSplitParticipants.filter((p: ReceiptSplitParticipant) => !p.paid).reduce((sum: number, p: ReceiptSplitParticipant) => sum + p.amount, 0), receipt?.currency)}</span>
+										</div>
+								</div>
+								
+								<!-- Action Buttons -->
+								<div class="flex flex-col sm:flex-row gap-3">
+									<button
+										type="button"
+										on:click={handleSaveSplit}
+										disabled={isProcessing}
+										class="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium"
+									>
+										{#if isProcessing}
+											<Loader2 class="w-5 h-5 animate-spin" />
+											<span>Saving...</span>
+										{:else}
+											<Check class="w-5 h-5" />
+											<span>Save Split</span>
+										{/if}
+									</button>
+									<button
+										type="button"
+										on:click={cancelSplitEditMode}
+										disabled={isProcessing}
+										class="flex items-center justify-center gap-2 px-6 py-3 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+									>
+										<X class="w-5 h-5" />
+										<span>Cancel</span>
+									</button>
+								</div>
+							</div>
+						{:else if splitData}
+							<!-- View Existing Split -->
+							<div class="space-y-4">
+								<div class="flex items-center justify-between">
+									<div class="flex items-center gap-2">
+										<span class="text-sm font-medium text-gray-600">Split Type:</span>
+										<span class="text-sm font-medium text-gray-900 capitalize">{splitData.split_type}</span>
+									</div>
+									<div class="flex gap-2">
+										<button
+											on:click={enterSplitEditMode}
+											disabled={isProcessing}
+											class="flex items-center gap-1 px-3 py-1.5 text-sm text-primary hover:bg-primary/10 rounded-lg transition-colors"
+										>
+											<Edit class="w-4 h-4" />
+											Edit
+										</button>
+										<button
+											on:click={handleDeleteSplit}
+											disabled={isProcessing}
+											class="flex items-center gap-1 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+										>
+											<Trash2 class="w-4 h-4" />
+											Delete
+										</button>
+									</div>
+								</div>
+								
+								<!-- Participants List -->
+								<div class="border rounded-lg overflow-hidden">
+									<table class="w-full">
+										<thead class="bg-gray-50">
+											<tr>
+												<th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Participant</th>
+												<th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+												<th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+											</tr>
+										</thead>
+										<tbody class="divide-y divide-gray-200">
+											{#each splitData.participants as participant}
+												<tr>
+													<td class="px-4 py-3 text-sm font-medium text-gray-900">{participant.name}</td>
+													<td class="px-4 py-3 text-sm text-gray-600 text-right">{formatCurrency(participant.amount, receipt?.currency)}</td>
+													<td class="px-4 py-3 text-center">
+														{#if participant.paid}
+															<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+																<CheckCircle class="w-3 h-3 mr-1" />
+																Paid
+															</span>
+														{:else}
+															<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+																<Clock class="w-3 h-3 mr-1" />
+																Pending
+															</span>
+														{/if}
+													</td>
+												</tr>
+											{/each}
+										</tbody>
+									</table>
+								</div>
+								
+								<!-- Split Summary -->
+								<div class="bg-gray-50 rounded-lg p-4 space-y-2">
+									<div class="flex justify-between text-sm">
+										<span class="text-gray-600">Total Amount:</span>
+										<span class="font-medium text-gray-900">{formatCurrency(receipt?.total || 0, receipt?.currency)}</span>
+									</div>
+									<div class="flex justify-between text-sm pt-2 border-t border-gray-200">
+										<span class="text-gray-600">Paid:</span>
+																		<span class="font-medium text-green-600">{formatCurrency(splitData.participants.filter((p: ReceiptSplitParticipant) => p.paid).reduce((sum: number, p: ReceiptSplitParticipant) => sum + p.amount, 0), receipt?.currency)}</span>
+									</div>
+									<div class="flex justify-between text-sm">
+										<span class="text-gray-600">Remaining:</span>
+																		<span class="font-medium text-orange-600">{formatCurrency(splitData.participants.filter((p: ReceiptSplitParticipant) => !p.paid).reduce((sum: number, p: ReceiptSplitParticipant) => sum + p.amount, 0), receipt?.currency)}</span>
+									</div>
+								</div>
+							</div>
+						{:else}
+							<!-- No Split - Create New -->
+							<div class="text-center py-8">
+								<p class="text-gray-500 mb-4">No split set up for this receipt.</p>
+								<button
+									on:click={enterSplitEditMode}
+									disabled={isProcessing}
+									class="inline-flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium"
+								>
+									<Users class="w-5 h-5" />
+									<span>Split This Receipt</span>
+								</button>
+							</div>
+						{/if}
+					</div>
+				{/if}
+			</section>
+			
+			<!-- Tags Section -->
 				<section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
 					<div class="px-6 py-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
 						<div class="flex items-center gap-2">

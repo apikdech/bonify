@@ -1,20 +1,20 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { analyticsDateRangeStore } from '$lib/stores';
+	import { analyticsDateRangeStore, toastStore } from '$lib/stores';
 	import api from '$lib/api';
-	import type { 
-		AnalyticsSummaryResponse, 
-		InsightsResponse, 
-		AnalyticsSummary,
-		Insights 
-	} from '$lib/api';
+	import type { AnalyticsSummary, Insights, BudgetStatus } from '$lib/api';
 	
 	let summary: AnalyticsSummary | null = null;
 	let insights: Insights | null = null;
 	let loading = true;
 	let error: string | null = null;
 	let warnings: string[] = [];
+	let exporting = false;
+	
+	// Budget alerts state
+	let budgetAlerts: BudgetStatus[] = [];
+	let loadingBudgetAlerts = false;
 	
 	async function loadData() {
 		loading = true;
@@ -39,15 +39,38 @@
 			
 			// Collect all warnings
 			if (summaryRes.warnings) {
-				warnings.push(...summaryRes.warnings.map(w => w.message));
+				warnings.push(...summaryRes.warnings.map((w: { message: string }) => w.message));
 			}
 			if (insightsRes.warnings) {
-				warnings.push(...insightsRes.warnings.map(w => w.message));
+				warnings.push(...insightsRes.warnings.map((w: { message: string }) => w.message));
 			}
+			
+			// Fetch budget alerts
+			await loadBudgetAlerts();
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load analytics';
 		} finally {
 			loading = false;
+		}
+	}
+	
+	async function loadBudgetAlerts() {
+		loadingBudgetAlerts = true;
+		try {
+			// Get current month in YYYY-MM format
+			const now = new Date();
+			const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+			
+			const statuses = await api.budgets.status(currentMonth);
+			
+			// Filter budgets over threshold (>=80%)
+			budgetAlerts = statuses.filter((status: BudgetStatus) => status.percentage >= 80);
+		} catch (err) {
+			// Silently fail - budget alerts are not critical
+			console.error('Failed to load budget alerts:', err);
+			budgetAlerts = [];
+		} finally {
+			loadingBudgetAlerts = false;
 		}
 	}
 	
@@ -58,13 +81,34 @@
 		}).format(value);
 	}
 	
-	function formatDate(dateStr: string): string {
-		const date = new Date(dateStr);
-		return date.toLocaleDateString('en-US', {
-			year: 'numeric',
-			month: 'long',
-			day: 'numeric'
-		});
+	async function exportCSV() {
+		exporting = true;
+		
+		try {
+			const { from, to } = $analyticsDateRangeStore;
+			const blob = await api.receipts.export({
+				from: from.toISOString(),
+				to: to.toISOString(),
+				format: 'csv'
+			});
+			
+			// Trigger download
+			const url = window.URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `receipts_${from.toISOString().split('T')[0]}_${to.toISOString().split('T')[0]}.csv`;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			window.URL.revokeObjectURL(url);
+			
+			toastStore.success('CSV exported successfully');
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Export failed';
+			toastStore.error(message);
+		} finally {
+			exporting = false;
+		}
 	}
 	
 	function getDayName(day: string): string {
@@ -90,6 +134,19 @@
 		if (percentage > 0) return 'positive';
 		if (percentage < 0) return 'negative';
 		return 'neutral';
+	}
+	
+	function getBudgetAlertClass(percentage: number): string {
+		if (percentage >= 100) return 'critical';
+		if (percentage >= 80) return 'warning';
+		return '';
+	}
+	
+	function getBudgetAlertMessage(alert: BudgetStatus): string {
+		if (alert.percentage >= 100) {
+			return `Budget exceeded: You've spent ${formatCurrency(alert.spent)} of your ${formatCurrency(alert.amount_limit)} limit (${alert.percentage.toFixed(1)}%)`;
+		}
+		return `Budget warning: You've spent ${formatCurrency(alert.spent)} of your ${formatCurrency(alert.amount_limit)} limit (${alert.percentage.toFixed(1)}%)`;
 	}
 	
 	$: dateRange = $analyticsDateRangeStore;
@@ -126,6 +183,43 @@
 				{/each}
 			</div>
 		{/if}
+		
+		{#if budgetAlerts.length > 0}
+			<div class="budget-alerts">
+				{#each budgetAlerts as alert}
+					<div class="budget-alert {getBudgetAlertClass(alert.percentage)}">
+						<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+							<line x1="12" y1="9" x2="12" y2="13"></line>
+							<line x1="12" y1="17" x2="12.01" y2="17"></line>
+						</svg>
+						<span>{getBudgetAlertMessage(alert)}</span>
+						<a href="/settings/budgets" class="alert-link">View Budgets</a>
+					</div>
+				{/each}
+			</div>
+		{/if}
+		
+		<section class="page-header">
+			<h2>Overview</h2>
+			<button 
+				class="export-button" 
+				on:click={exportCSV} 
+				disabled={exporting}
+			>
+				{#if exporting}
+					<div class="button-spinner"></div>
+					<span>Exporting...</span>
+				{:else}
+					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+						<polyline points="7 10 12 15 17 10"></polyline>
+						<line x1="12" y1="15" x2="12" y2="3"></line>
+					</svg>
+					<span>Export CSV</span>
+				{/if}
+			</button>
+		</section>
 		
 		<section class="summary-cards">
 			<div class="summary-card">
@@ -368,6 +462,43 @@
 		margin-bottom: 8px;
 	}
 	
+	.budget-alerts {
+		margin-bottom: 24px;
+	}
+	
+	.budget-alert {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px 12px;
+		border-radius: 6px;
+		font-size: 14px;
+		margin-bottom: 8px;
+	}
+	
+	.budget-alert.warning {
+		background: #fef3c7;
+		border: 1px solid #f59e0b;
+		color: #92400e;
+	}
+	
+	.budget-alert.critical {
+		background: #fee2e2;
+		border: 1px solid #ef4444;
+		color: #dc2626;
+	}
+	
+	.alert-link {
+		margin-left: auto;
+		color: inherit;
+		text-decoration: underline;
+		font-weight: 500;
+	}
+	
+	.alert-link:hover {
+		opacity: 0.8;
+	}
+	
 	.summary-cards {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -572,7 +703,60 @@
 		font-weight: 500;
 	}
 	
+	.page-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 24px;
+	}
+	
+	.page-header h2 {
+		font-size: 18px;
+		font-weight: 600;
+		color: #111827;
+		margin: 0;
+	}
+	
+	.export-button {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 16px;
+		background: #3b82f6;
+		color: white;
+		border: none;
+		border-radius: 6px;
+		cursor: pointer;
+		font-size: 14px;
+		font-weight: 500;
+		transition: all 0.2s;
+	}
+	
+	.export-button:hover:not(:disabled) {
+		background: #2563eb;
+	}
+	
+	.export-button:disabled {
+		opacity: 0.7;
+		cursor: not-allowed;
+	}
+	
+	.button-spinner {
+		width: 14px;
+		height: 14px;
+		border: 2px solid rgba(255, 255, 255, 0.3);
+		border-top-color: white;
+		border-radius: 50%;
+		animation: spin 1s linear infinite;
+	}
+	
 	@media (max-width: 640px) {
+		.page-header {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 12px;
+		}
+		
 		.summary-cards {
 			grid-template-columns: repeat(2, 1fr);
 		}

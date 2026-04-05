@@ -14,6 +14,9 @@ export interface User {
 	email: string;
 	role: string;
 	home_currency: string;
+	notify_on_parse: boolean;
+	notify_on_pending_review: boolean;
+	notify_budget_alerts: boolean;
 }
 
 export interface ReceiptItem {
@@ -73,6 +76,32 @@ export interface CreateReceiptRequest {
 	image_url?: string;
 }
 
+export interface ReceiptSplitParticipant {
+	id?: string;
+	name: string;
+	amount: number;
+	paid: boolean;
+}
+
+export interface ReceiptSplit {
+	id: string;
+	receipt_id: string;
+	split_type: 'even' | 'custom' | 'items';
+	participants: ReceiptSplitParticipant[];
+	created_at: string;
+	updated_at: string;
+}
+
+export interface CreateSplitRequest {
+	split_type: 'even' | 'custom' | 'items';
+	participants: Omit<ReceiptSplitParticipant, 'id'>[];
+}
+
+export interface UpdateSplitRequest {
+	split_type?: 'even' | 'custom' | 'items';
+	participants?: Omit<ReceiptSplitParticipant, 'id'>[];
+}
+
 export interface UpdateReceiptRequest {
 	title?: string;
 	currency?: string;
@@ -117,6 +146,52 @@ export interface CreateTagRequest {
 export interface UpdateTagRequest {
 	name?: string;
 	color?: string;
+}
+
+// ============ Budget Interfaces ============
+
+export interface Budget {
+	id: string;
+	user_id: string;
+	tag_id: string | null;
+	month: string;  // YYYY-MM format
+	amount_limit: number;
+}
+
+export interface BudgetStatus {
+	budget_id: string;
+	tag_id: string | null;
+	month: string;
+	amount_limit: number;
+	spent: number;
+	percentage: number;
+	remaining: number;
+}
+
+export interface CreateBudgetRequest {
+	tag_id?: string | null;
+	month: string;
+	amount_limit: number;
+}
+
+export interface UpdateBudgetRequest {
+	tag_id?: string | null;
+	month?: string;
+	amount_limit?: number;
+}
+
+export interface BudgetListParams {
+	month?: string;
+}
+
+// ============ User Interfaces ============
+
+export interface UpdateUserRequest {
+	name?: string;
+	email?: string;
+	notify_on_parse?: boolean;
+	notify_on_pending_review?: boolean;
+	notify_budget_alerts?: boolean;
 }
 
 // ============ Analytics Interfaces ============
@@ -343,6 +418,41 @@ class APIClient {
 
 		reject: async (id: string): Promise<void> => {
 			await this.fetch(`/receipts/${id}/reject`, { method: 'PATCH' });
+		},
+
+		export: async (params: { from: string; to: string; format: string }): Promise<Blob> => {
+			const queryParams = new URLSearchParams();
+			queryParams.set('from', params.from);
+			queryParams.set('to', params.to);
+			queryParams.set('format', params.format);
+			const response = await this.fetch(`/receipts/export?${queryParams}`, { method: 'GET' });
+			return response.blob();
+		},
+
+		// ============ Splits Methods ============
+		getSplits: async (id: string): Promise<ReceiptSplit> => {
+			const response = await this.fetch(`/receipts/${id}/splits`, { method: 'GET' });
+			return response.json();
+		},
+
+		createSplit: async (id: string, data: CreateSplitRequest): Promise<ReceiptSplit> => {
+			const response = await this.fetch(`/receipts/${id}/splits`, {
+				method: 'POST',
+				body: JSON.stringify(data)
+			});
+			return response.json();
+		},
+
+		updateSplit: async (id: string, data: UpdateSplitRequest): Promise<ReceiptSplit> => {
+			const response = await this.fetch(`/receipts/${id}/splits`, {
+				method: 'PUT',
+				body: JSON.stringify(data)
+			});
+			return response.json();
+		},
+
+		deleteSplit: async (id: string): Promise<void> => {
+			await this.fetch(`/receipts/${id}/splits`, { method: 'DELETE' });
 		}
 	};
 
@@ -372,6 +482,59 @@ class APIClient {
 
 		delete: async (id: string): Promise<void> => {
 			await this.fetch(`/tags/${id}`, { method: 'DELETE' });
+		}
+	};
+
+	// ============ Budget Methods ============
+
+	budgets = {
+		list: async (params: BudgetListParams = {}): Promise<Budget[]> => {
+			const queryParams = new URLSearchParams();
+			if (params.month) queryParams.set('month', params.month);
+			
+			const query = queryParams.toString();
+			const endpoint = query ? `/budgets?${query}` : '/budgets';
+			const response = await this.fetch(endpoint, { method: 'GET' });
+			return response.json();
+		},
+
+		create: async (data: CreateBudgetRequest): Promise<Budget> => {
+			const response = await this.fetch('/budgets', {
+				method: 'POST',
+				body: JSON.stringify(data)
+			});
+			return response.json();
+		},
+
+		update: async (id: string, data: UpdateBudgetRequest): Promise<Budget> => {
+			const response = await this.fetch(`/budgets/${id}`, {
+				method: 'PATCH',
+				body: JSON.stringify(data)
+			});
+			return response.json();
+		},
+
+		delete: async (id: string): Promise<void> => {
+			await this.fetch(`/budgets/${id}`, { method: 'DELETE' });
+		},
+
+		status: async (month: string): Promise<BudgetStatus[]> => {
+			const queryParams = new URLSearchParams();
+			queryParams.set('month', month);
+			const response = await this.fetch(`/budgets/status?${queryParams}`, { method: 'GET' });
+			return response.json();
+		}
+	};
+
+	// ============ User Methods ============
+
+	user = {
+		update: async (data: UpdateUserRequest): Promise<User> => {
+			const response = await this.fetch('/users/me', {
+				method: 'PATCH',
+				body: JSON.stringify(data)
+			});
+			return response.json();
 		}
 	};
 
