@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # ============================================================================
@@ -7,7 +7,7 @@ services:
   traefik:
     image: traefik:v3.0
     container_name: receipt-manager-traefik
-    command: []  # Use traefik.prod.yml instead of command args
+    command: [] # Use traefik.prod.yml instead of command args
     ports:
       - "80:80"
       - "443:443"
@@ -25,10 +25,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
+          cpus: "0.5"
           memory: 256M
         reservations:
-          cpus: '0.1'
+          cpus: "0.1"
           memory: 128M
 
   # ============================================================================
@@ -37,11 +37,11 @@ services:
   api:
     # Use pre-built image in production
     # image: your-registry/receipt-manager-backend:latest
-    
+
     labels:
       # Production routers with HTTPS
       - "traefik.enable=true"
-      
+
       # API Router - HTTPS with Let's Encrypt
       - "traefik.http.routers.api-prod.rule=Host(`${DOMAIN:-localhost}`) && PathPrefix(`/api`)"
       - "traefik.http.routers.api-prod.entrypoints=websecure"
@@ -49,7 +49,7 @@ services:
       - "traefik.http.routers.api-prod.tls.certresolver=letsencrypt"
       - "traefik.http.routers.api-prod.service=api"
       - "traefik.http.routers.api-prod.middlewares=security-headers,cors,rate-limit-api,compression,circuit-breaker"
-      
+
       # Webhook Router - HTTPS
       - "traefik.http.routers.webhooks-prod.rule=Host(`${DOMAIN:-localhost}`) && PathPrefix(`/webhooks`)"
       - "traefik.http.routers.webhooks-prod.entrypoints=websecure"
@@ -57,7 +57,7 @@ services:
       - "traefik.http.routers.webhooks-prod.tls.certresolver=letsencrypt"
       - "traefik.http.routers.webhooks-prod.service=api"
       - "traefik.http.routers.webhooks-prod.middlewares=security-headers,rate-limit-webhooks,compression"
-      
+
       # Health Check
       - "traefik.http.routers.health-prod.rule=Host(`${DOMAIN:-localhost}`) && Path(`/health`)"
       - "traefik.http.routers.health-prod.entrypoints=websecure"
@@ -65,28 +65,28 @@ services:
       - "traefik.http.routers.health-prod.tls.certresolver=letsencrypt"
       - "traefik.http.routers.health-prod.service=api"
       - "traefik.http.routers.health-prod.priority=100"
-      
+
       # Service with improved health checks
       - "traefik.http.services.api.loadbalancer.server.port=8080"
       - "traefik.http.services.api.loadbalancer.healthcheck.path=/health"
       - "traefik.http.services.api.loadbalancer.healthcheck.interval=5s"
       - "traefik.http.services.api.loadbalancer.healthcheck.timeout=3s"
-    
+
     environment:
       - SERVER_ENV=production
       - JWT_SECRET=${JWT_SECRET}
       - LLM_API_KEY=${LLM_API_KEY}
-    
+
     deploy:
       replicas: 2
       resources:
         limits:
-          cpus: '1.0'
+          cpus: "1.0"
           memory: 512M
         reservations:
-          cpus: '0.25'
+          cpus: "0.25"
           memory: 128M
-    
+
     logging:
       driver: "json-file"
       options:
@@ -99,26 +99,26 @@ services:
   worker:
     # Use pre-built image
     # image: your-registry/receipt-manager-backend:latest
-    
+
     environment:
       - SERVER_ENV=production
       - JWT_SECRET=${JWT_SECRET}
       - LLM_API_KEY=${LLM_API_KEY}
-    
+
     # Workers don't need Traefik labels
     labels:
       - "traefik.enable=false"
-    
+
     deploy:
       replicas: 3
       resources:
         limits:
-          cpus: '1.0'
+          cpus: "1.0"
           memory: 512M
         reservations:
-          cpus: '0.25'
+          cpus: "0.25"
           memory: 128M
-    
+
     logging:
       driver: "json-file"
       options:
@@ -129,26 +129,26 @@ services:
   # PostgreSQL Production
   # ============================================================================
   postgres:
-    image: postgres:16-alpine
-    
+    image: postgres:17-alpine
+
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-    
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    
+
     labels:
       - "traefik.enable=false"
-    
+
     deploy:
       resources:
         limits:
-          cpus: '1.0'
+          cpus: "1.0"
           memory: 1G
         reservations:
-          cpus: '0.5'
+          cpus: "0.5"
           memory: 256M
-    
+
     logging:
       driver: "json-file"
       options:
@@ -161,13 +161,13 @@ services:
   redis:
     labels:
       - "traefik.enable=false"
-    
+
     deploy:
       resources:
         limits:
-          cpus: '0.5'
+          cpus: "0.5"
           memory: 256M
-    
+
     logging:
       driver: "json-file"
       options:
@@ -180,16 +180,16 @@ services:
   rustfs:
     environment:
       - RUSTFS_ROOT_PASSWORD=${RUSTFS_ROOT_PASSWORD}
-    
+
     labels:
       - "traefik.enable=false"
-    
+
     deploy:
       resources:
         limits:
-          cpus: '1.0'
+          cpus: "1.0"
           memory: 512M
-    
+
     logging:
       driver: "json-file"
       options:
@@ -202,7 +202,7 @@ services:
   temporal:
     labels:
       - "traefik.enable=false"
-    
+
     logging:
       driver: "json-file"
       options:
@@ -224,7 +224,7 @@ services:
       # Add basic auth and IP whitelist for security
       - "traefik.http.routers.temporal-ui-prod.middlewares=strip-temporal-prefix,basic-auth,ip-whitelist,security-headers"
       - "traefik.http.services.temporal-ui.loadbalancer.server.port=8080"
-    
+
     logging:
       driver: "json-file"
       options:
