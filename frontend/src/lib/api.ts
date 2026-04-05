@@ -76,6 +76,32 @@ export interface CreateReceiptRequest {
 	image_url?: string;
 }
 
+export interface ReceiptSplitParticipant {
+	id?: string;
+	name: string;
+	amount: number;
+	paid: boolean;
+}
+
+export interface ReceiptSplit {
+	id: string;
+	receipt_id: string;
+	split_type: 'even' | 'custom' | 'items';
+	participants: ReceiptSplitParticipant[];
+	created_at: string;
+	updated_at: string;
+}
+
+export interface CreateSplitRequest {
+	split_type: 'even' | 'custom' | 'items';
+	participants: Omit<ReceiptSplitParticipant, 'id'>[];
+}
+
+export interface UpdateSplitRequest {
+	split_type?: 'even' | 'custom' | 'items';
+	participants?: Omit<ReceiptSplitParticipant, 'id'>[];
+}
+
 export interface UpdateReceiptRequest {
 	title?: string;
 	currency?: string;
@@ -401,6 +427,32 @@ class APIClient {
 			queryParams.set('format', params.format);
 			const response = await this.fetch(`/receipts/export?${queryParams}`, { method: 'GET' });
 			return response.blob();
+		},
+
+		// ============ Splits Methods ============
+		getSplits: async (id: string): Promise<ReceiptSplit> => {
+			const response = await this.fetch(`/receipts/${id}/splits`, { method: 'GET' });
+			return response.json();
+		},
+
+		createSplit: async (id: string, data: CreateSplitRequest): Promise<ReceiptSplit> => {
+			const response = await this.fetch(`/receipts/${id}/splits`, {
+				method: 'POST',
+				body: JSON.stringify(data)
+			});
+			return response.json();
+		},
+
+		updateSplit: async (id: string, data: UpdateSplitRequest): Promise<ReceiptSplit> => {
+			const response = await this.fetch(`/receipts/${id}/splits`, {
+				method: 'PUT',
+				body: JSON.stringify(data)
+			});
+			return response.json();
+		},
+
+		deleteSplit: async (id: string): Promise<void> => {
+			await this.fetch(`/receipts/${id}/splits`, { method: 'DELETE' });
 		}
 	};
 
