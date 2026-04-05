@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { analyticsDateRangeStore, toastStore } from '$lib/stores';
 	import api from '$lib/api';
-	import type { AnalyticsSummary, Insights } from '$lib/api';
+	import type { AnalyticsSummary, Insights, BudgetStatus } from '$lib/api';
 	
 	let summary: AnalyticsSummary | null = null;
 	let insights: Insights | null = null;
@@ -11,6 +11,10 @@
 	let error: string | null = null;
 	let warnings: string[] = [];
 	let exporting = false;
+	
+	// Budget alerts state
+	let budgetAlerts: BudgetStatus[] = [];
+	let loadingBudgetAlerts = false;
 	
 	async function loadData() {
 		loading = true;
@@ -40,11 +44,41 @@
 			if (insightsRes.warnings) {
 				warnings.push(...insightsRes.warnings.map((w: { message: string }) => w.message));
 			}
+			
+			// Fetch budget alerts
+			await loadBudgetAlerts();
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load analytics';
 		} finally {
 			loading = false;
 		}
+	}
+	
+	async function loadBudgetAlerts() {
+		loadingBudgetAlerts = true;
+		try {
+			// Get current month in YYYY-MM format
+			const now = new Date();
+			const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+			
+			const statuses = await api.budgets.status(currentMonth);
+			
+			// Filter budgets over threshold (>=80%)
+			budgetAlerts = statuses.filter((status: BudgetStatus) => status.percentage >= 80);
+		} catch (err) {
+			// Silently fail - budget alerts are not critical
+			console.error('Failed to load budget alerts:', err);
+			budgetAlerts = [];
+		} finally {
+			loadingBudgetAlerts = false;
+		}
+	}
+	
+	function formatCurrency(value: number): string {
+		return new Intl.NumberFormat('en-US', {
+			style: 'currency',
+			currency: 'USD'
+		}).format(value);
 	}
 	
 	async function exportCSV() {
@@ -77,13 +111,6 @@
 		}
 	}
 	
-	function formatCurrency(value: number): string {
-		return new Intl.NumberFormat('en-US', {
-			style: 'currency',
-			currency: 'USD'
-		}).format(value);
-	}
-	
 	function getDayName(day: string): string {
 		const days: Record<string, string> = {
 			'0': 'Sunday',
@@ -107,6 +134,19 @@
 		if (percentage > 0) return 'positive';
 		if (percentage < 0) return 'negative';
 		return 'neutral';
+	}
+	
+	function getBudgetAlertClass(percentage: number): string {
+		if (percentage >= 100) return 'critical';
+		if (percentage >= 80) return 'warning';
+		return '';
+	}
+	
+	function getBudgetAlertMessage(alert: BudgetStatus): string {
+		if (alert.percentage >= 100) {
+			return `Budget exceeded: You've spent ${formatCurrency(alert.spent)} of your ${formatCurrency(alert.amount_limit)} limit (${alert.percentage.toFixed(1)}%)`;
+		}
+		return `Budget warning: You've spent ${formatCurrency(alert.spent)} of your ${formatCurrency(alert.amount_limit)} limit (${alert.percentage.toFixed(1)}%)`;
 	}
 	
 	$: dateRange = $analyticsDateRangeStore;
@@ -140,6 +180,22 @@
 			<div class="warnings">
 				{#each warnings as warning}
 					<div class="warning">{warning}</div>
+				{/each}
+			</div>
+		{/if}
+		
+		{#if budgetAlerts.length > 0}
+			<div class="budget-alerts">
+				{#each budgetAlerts as alert}
+					<div class="budget-alert {getBudgetAlertClass(alert.percentage)}">
+						<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+							<line x1="12" y1="9" x2="12" y2="13"></line>
+							<line x1="12" y1="17" x2="12.01" y2="17"></line>
+						</svg>
+						<span>{getBudgetAlertMessage(alert)}</span>
+						<a href="/settings/budgets" class="alert-link">View Budgets</a>
+					</div>
 				{/each}
 			</div>
 		{/if}
@@ -404,6 +460,43 @@
 		border-radius: 6px;
 		font-size: 14px;
 		margin-bottom: 8px;
+	}
+	
+	.budget-alerts {
+		margin-bottom: 24px;
+	}
+	
+	.budget-alert {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px 12px;
+		border-radius: 6px;
+		font-size: 14px;
+		margin-bottom: 8px;
+	}
+	
+	.budget-alert.warning {
+		background: #fef3c7;
+		border: 1px solid #f59e0b;
+		color: #92400e;
+	}
+	
+	.budget-alert.critical {
+		background: #fee2e2;
+		border: 1px solid #ef4444;
+		color: #dc2626;
+	}
+	
+	.alert-link {
+		margin-left: auto;
+		color: inherit;
+		text-decoration: underline;
+		font-weight: 500;
+	}
+	
+	.alert-link:hover {
+		opacity: 0.8;
 	}
 	
 	.summary-cards {
