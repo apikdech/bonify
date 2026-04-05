@@ -1,0 +1,109 @@
+http:
+  middlewares:
+    # Security Headers
+    security-headers:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
+        customResponseHeaders:
+          X-Content-Type-Options: "nosniff"
+          X-Frame-Options: "DENY"
+          X-XSS-Protection: "1; mode=block"
+          Referrer-Policy: "strict-origin-when-cross-origin"
+          Permissions-Policy: "geolocation=(), microphone=(), camera=()"
+        sslRedirect: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: true
+    
+    # CORS Headers
+    cors:
+      headers:
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+          - OPTIONS
+        accessControlAllowHeaders:
+          - Origin
+          - Content-Type
+          - Accept
+          - Authorization
+          - X-Requested-With
+        accessControlAllowOriginList:
+          - "https://localhost:3000"
+          - "http://localhost:3000"
+          - "https://localhost:8080"
+          - "http://localhost:8080"
+        accessControlMaxAge: 86400
+        addVaryHeader: true
+    
+    # Rate Limiting - API endpoints
+    rate-limit-api:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1m
+    
+    # Rate Limiting - Webhook endpoints (more permissive for bots)
+    rate-limit-webhooks:
+      rateLimit:
+        average: 60
+        burst: 20
+        period: 1m
+    
+    # Rate Limiting - Strict (for login, sensitive endpoints)
+    rate-limit-strict:
+      rateLimit:
+        average: 10
+        burst: 5
+        period: 1m
+    
+    # Compress responses
+    compression:
+      compress:
+        excludedContentTypes:
+          - text/event-stream
+    
+    # Remove API prefix before forwarding to backend
+    strip-api-prefix:
+      stripPrefix:
+        prefixes:
+          - "/api"
+    
+    # Basic Auth (for Temporal UI or admin endpoints)
+    basic-auth:
+      basicAuth:
+        users:
+          # Generate with: htpasswd -nbB admin your-password
+          # Replace this with your actual hash
+          - "admin:$2y$10$ziK8fJjR4.PcU8J5fWyGZOq.h.WiKrSNvGu3f8lhLgHV8nVYhMQm"
+        realm: "Receipt Manager Admin"
+    
+    # IP Whitelist (for admin access)
+    ip-whitelist:
+      ipAllowList:
+        sourceRange:
+          - "127.0.0.1/32"
+          - "10.0.0.0/8"
+          - "172.16.0.0/12"
+          - "192.168.0.0/16"
+    
+    # Circuit Breaker (prevent cascade failures)
+    circuit-breaker:
+      circuitBreaker:
+        expression: "LatencyAtQuantileMS(50.0) > 100"
+        checkPeriod: 10s
+        fallbackDuration: 10s
+        recoveryDuration: 10s
+    
+    # Retry logic
+    retry:
+      retry:
+        attempts: 3
+        initialInterval: 100ms

@@ -1,0 +1,59 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+bin/
+dist/
+api
+worker
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Documentation
+*.md
+LICENSE
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Test files
+*_test.go
+/test/
+/coverage/
+*.cover
+*.cov
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log

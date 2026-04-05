@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -10,7 +9,11 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	openai "github.com/sashabaranov/go-openai"
+	anyllm "github.com/mozilla-ai/any-llm-go"
+	"github.com/mozilla-ai/any-llm-go/providers/anthropic"
+	"github.com/mozilla-ai/any-llm-go/providers/gemini"
+	"github.com/mozilla-ai/any-llm-go/providers/ollama"
+	"github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
 // ReceiptParseItem represents an item extracted from a receipt
@@ -48,33 +51,7 @@ Never add commentary, explanations, or markdown.
 If a field cannot be determined from the image, use null.
 All monetary values must be numbers (not strings), in the receipt's original currency unit.
 
-Extract all data from this receipt image and return ONLY a JSON object with this exact structure:
-
-{
-  "title": "string — shop or merchant name",
-  "receipt_date": "YYYY-MM-DD or null",
-  "currency": "ISO 4217 code e.g. IDR, USD, SGD",
-  "payment_method": "cash | card | qris | transfer | unknown",
-  "items": [
-    {
-      "name": "string",
-      "quantity": number,
-      "unit_price": number,
-      "discount": number or 0,
-      "subtotal": number
-    }
-  ],
-  "fees": [
-    {
-      "label": "string e.g. PPN 11%, Service charge, Delivery",
-      "fee_type": "tax | service | delivery | tip | other",
-      "amount": number
-    }
-  ],
-  "subtotal": number,
-  "total": number,
-  "ocr_confidence": number between 0.0 and 1.0
-}
+Extract all data from this receipt image. Return the data according to the provided JSON schema.
 
 Rules:
 - ocr_confidence reflects how clearly the receipt is readable (1.0 = perfectly clear)
@@ -83,6 +60,106 @@ Rules:
 - If an item has no discount, set discount to 0
 - Quantity must be a positive integer
 - Do not invent data — use null for genuinely missing fields`
+
+// receiptJSONSchema returns the JSON schema for receipt parsing
+func receiptJSONSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"title": map[string]any{
+				"type":        "string",
+				"description": "Shop or merchant name",
+			},
+			"receipt_date": map[string]any{
+				"type":        "string",
+				"description": "Receipt date in YYYY-MM-DD format or null if not visible",
+				"format":      "date",
+			},
+			"currency": map[string]any{
+				"type":        "string",
+				"description": "ISO 4217 currency code (e.g., IDR, USD, SGD)",
+			},
+			"payment_method": map[string]any{
+				"type":        "string",
+				"description": "Payment method used",
+				"enum":        []string{"cash", "card", "qris", "transfer", "unknown"},
+			},
+			"items": map[string]any{
+				"type":        "array",
+				"description": "Line items on the receipt",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name": map[string]any{
+							"type":        "string",
+							"description": "Item name",
+						},
+						"quantity": map[string]any{
+							"type":        "number",
+							"description": "Quantity purchased",
+							"minimum":     1,
+						},
+						"unit_price": map[string]any{
+							"type":        "number",
+							"description": "Price per unit",
+						},
+						"discount": map[string]any{
+							"type":        "number",
+							"description": "Discount amount (0 if none)",
+							"minimum":     0,
+						},
+						"subtotal": map[string]any{
+							"type":        "number",
+							"description": "Line total (quantity x unit_price - discount)",
+						},
+					},
+					"required": []string{"name", "quantity", "unit_price", "discount", "subtotal"},
+				},
+			},
+			"fees": map[string]any{
+				"type":        "array",
+				"description": "Additional fees and taxes",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"label": map[string]any{
+							"type":        "string",
+							"description": "Fee label (e.g., PPN 11%, Service charge, Delivery)",
+						},
+						"fee_type": map[string]any{
+							"type":        "string",
+							"description": "Type of fee",
+							"enum":        []string{"tax", "service", "delivery", "tip", "other"},
+						},
+						"amount": map[string]any{
+							"type":        "number",
+							"description": "Fee amount",
+							"minimum":     0,
+						},
+					},
+					"required": []string{"label", "fee_type", "amount"},
+				},
+			},
+			"subtotal": map[string]any{
+				"type":        "number",
+				"description": "Sum of all items before fees",
+				"minimum":     0,
+			},
+			"total": map[string]any{
+				"type":        "number",
+				"description": "Final total amount after fees and discounts",
+				"minimum":     0,
+			},
+			"ocr_confidence": map[string]any{
+				"type":        "number",
+				"description": "Confidence score from 0.0 to 1.0 (1.0 = perfectly clear)",
+				"minimum":     0,
+				"maximum":     1,
+			},
+		},
+		"required": []string{"title", "currency", "payment_method", "items", "fees", "subtotal", "total", "ocr_confidence"},
+	}
+}
 
 // LLMService provides LLM-based receipt parsing
 type LLMService struct {
@@ -103,7 +180,7 @@ func NewLLMService(
 	}
 }
 
-// ParseReceipt parses a receipt image using LLM vision capabilities
+// ParseReceipt parses a receipt image using LLM vision capabilities with structured output
 func (s *LLMService) ParseReceipt(ctx context.Context, userID uuid.UUID, imageURL string) (*ParsedReceipt, error) {
 	// 1. Resolve LLM config
 	llmConfig, err := s.settingsService.ResolveLLMConfig(ctx, userID)
@@ -117,32 +194,35 @@ func (s *LLMService) ParseReceipt(ctx context.Context, userID uuid.UUID, imageUR
 		return nil, fmt.Errorf("failed to fetch image: %w", err)
 	}
 
-	// 3. Call LLM vision API based on provider
-	var rawJSON string
-	switch llmConfig.Provider {
-	case "anthropic":
-		rawJSON, err = s.callAnthropic(ctx, llmConfig, imageData, contentType)
-	case "openai":
-		rawJSON, err = s.callOpenAI(ctx, llmConfig, imageData, contentType)
-	case "gemini":
-		rawJSON, err = s.callGemini(ctx, llmConfig, imageData, contentType)
-	case "ollama":
-		rawJSON, err = s.callOllama(ctx, llmConfig, imageData, contentType)
-	default:
-		return nil, fmt.Errorf("unsupported LLM provider: %s", llmConfig.Provider)
+	// 3. Create provider based on config
+	provider, err := s.newProviderFromConfig(llmConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create LLM provider: %w", err)
 	}
 
+	// 4. Call LLM vision API with structured output
+	parsedReceipt, err := s.callLLMWithStructuredOutput(ctx, provider, llmConfig, imageData, contentType)
 	if err != nil {
 		return nil, fmt.Errorf("LLM API call failed: %w", err)
 	}
 
-	// 4. Parse JSON response
-	parsedReceipt, err := s.parseReceiptJSON(rawJSON)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
-	}
-
 	return parsedReceipt, nil
+}
+
+// newProviderFromConfig creates a provider based on the configuration
+func (s *LLMService) newProviderFromConfig(config *LLMConfig) (anyllm.Provider, error) {
+	switch config.Provider {
+	case "anthropic":
+		return anthropic.New(anyllm.WithAPIKey(config.APIKey))
+	case "openai":
+		return openai.New(anyllm.WithAPIKey(config.APIKey))
+	case "gemini":
+		return gemini.New(anyllm.WithAPIKey(config.APIKey))
+	case "ollama":
+		return ollama.New()
+	default:
+		return nil, fmt.Errorf("unsupported LLM provider: %s", config.Provider)
+	}
 }
 
 // fetchImage retrieves image data from a URL (supports presigned URLs and direct URLs)
@@ -171,289 +251,88 @@ func (s *LLMService) fetchImage(ctx context.Context, imageURL string) ([]byte, s
 	return imageData, contentType, nil
 }
 
-// callOpenAI calls the OpenAI Vision API
-func (s *LLMService) callOpenAI(ctx context.Context, config *LLMConfig, imageData []byte, contentType string) (string, error) {
-	client := openai.NewClient(config.APIKey)
-
+// callLLMWithStructuredOutput calls the LLM provider with structured JSON output
+func (s *LLMService) callLLMWithStructuredOutput(ctx context.Context, provider anyllm.Provider, config *LLMConfig, imageData []byte, contentType string) (*ParsedReceipt, error) {
 	// Encode image to base64
 	base64Image := base64.StdEncoding.EncodeToString(imageData)
+
+	// Create image URL in data URI format
 	imageURL := fmt.Sprintf("data:%s;base64,%s", contentType, base64Image)
 
-	req := openai.ChatCompletionRequest{
-		Model: config.Model,
-		Messages: []openai.ChatCompletionMessage{
-			{
-				Role:    openai.ChatMessageRoleSystem,
-				Content: systemPrompt,
-			},
-			{
-				Role:    openai.ChatMessageRoleUser,
-				Content: "Extract data from this receipt image.",
+	// Build messages with system prompt and user content using ContentPart for multimodal
+	messages := []anyllm.Message{
+		{
+			Role:    anyllm.RoleSystem,
+			Content: systemPrompt,
+		},
+		{
+			Role: anyllm.RoleUser,
+			Content: []anyllm.ContentPart{
+				{
+					Type: "text",
+					Text: "Extract data from this receipt image.",
+				},
+				{
+					Type: "image_url",
+					ImageURL: &anyllm.ImageURL{
+						URL: imageURL,
+					},
+				},
 			},
 		},
 	}
 
-	// Add vision content using the proper content part type
-	req.Messages[1].MultiContent = []openai.ChatMessagePart{
-		{
-			Type: openai.ChatMessagePartTypeText,
-			Text: "Extract data from this receipt image.",
-		},
-		{
-			Type: openai.ChatMessagePartTypeImageURL,
-			ImageURL: &openai.ChatMessageImageURL{
-				URL: imageURL,
+	// Create strict mode for structured output
+	strict := true
+
+	// Create completion params with structured JSON output
+	params := anyllm.CompletionParams{
+		Model:    config.Model,
+		Messages: messages,
+		ResponseFormat: &anyllm.ResponseFormat{
+			Type: "json_schema",
+			JSONSchema: &anyllm.JSONSchema{
+				Name:        "receipt_extraction",
+				Description: "Structured receipt data extracted from an image",
+				Schema:      receiptJSONSchema(),
+				Strict:      &strict,
 			},
 		},
 	}
-	req.Messages[1].Content = "" // Clear content when using MultiContent
 
-	resp, err := client.CreateChatCompletion(ctx, req)
+	// Call the provider
+	resp, err := provider.Completion(ctx, params)
 	if err != nil {
-		return "", fmt.Errorf("OpenAI API error: %w", err)
+		return nil, fmt.Errorf("LLM completion error: %w", err)
 	}
 
 	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("no response from OpenAI")
+		return nil, fmt.Errorf("no response from LLM")
 	}
 
-	return resp.Choices[0].Message.Content, nil
-}
+	// Extract the JSON content from the response
+	content := resp.Choices[0].Message.Content
+	var rawJSON string
 
-// callAnthropic calls the Anthropic Claude Vision API
-func (s *LLMService) callAnthropic(ctx context.Context, config *LLMConfig, imageData []byte, contentType string) (string, error) {
-	// Encode image to base64
-	base64Image := base64.StdEncoding.EncodeToString(imageData)
-
-	// Determine media type from content type
-	mediaType := contentType
-	if mediaType == "" {
-		mediaType = "image/jpeg"
-	}
-
-	reqBody := map[string]interface{}{
-		"model": config.Model,
-		"messages": []map[string]interface{}{
-			{
-				"role":    "user",
-				"content": systemPrompt + "\n\nExtract data from this receipt image.",
-			},
-			{
-				"role": "user",
-				"content": []map[string]interface{}{
-					{
-						"type": "image",
-						"source": map[string]string{
-							"type":       "base64",
-							"media_type": mediaType,
-							"data":       base64Image,
-						},
-					},
-				},
-			},
-		},
-		"max_tokens": 4096,
-	}
-
-	jsonBody, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", config.APIKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to call Anthropic API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("Anthropic API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var result struct {
-		Content []struct {
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if len(result.Content) == 0 {
-		return "", fmt.Errorf("no content in Anthropic response")
-	}
-
-	return result.Content[0].Text, nil
-}
-
-// callGemini calls the Google Gemini Vision API
-func (s *LLMService) callGemini(ctx context.Context, config *LLMConfig, imageData []byte, contentType string) (string, error) {
-	// Encode image to base64
-	base64Image := base64.StdEncoding.EncodeToString(imageData)
-
-	// Determine MIME type
-	mimeType := contentType
-	if mimeType == "" {
-		mimeType = "image/jpeg"
-	}
-
-	reqBody := map[string]interface{}{
-		"contents": []map[string]interface{}{
-			{
-				"parts": []map[string]interface{}{
-					{
-						"text": systemPrompt + "\n\nExtract data from this receipt image.",
-					},
-					{
-						"inline_data": map[string]string{
-							"mime_type": mimeType,
-							"data":      base64Image,
-						},
-					},
-				},
-			},
-		},
-		"generationConfig": map[string]interface{}{
-			"responseMimeType": "application/json",
-		},
-	}
-
-	jsonBody, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", config.Model, config.APIKey)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to call Gemini API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("Gemini API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var result struct {
-		Candidates []struct {
-			Content struct {
-				Parts []struct {
-					Text string `json:"text"`
-				} `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if len(result.Candidates) == 0 || len(result.Candidates[0].Content.Parts) == 0 {
-		return "", fmt.Errorf("no content in Gemini response")
-	}
-
-	return result.Candidates[0].Content.Parts[0].Text, nil
-}
-
-// callOllama calls a local Ollama instance
-func (s *LLMService) callOllama(ctx context.Context, config *LLMConfig, imageData []byte, contentType string) (string, error) {
-	// Encode image to base64
-	base64Image := base64.StdEncoding.EncodeToString(imageData)
-
-	reqBody := map[string]interface{}{
-		"model": config.Model,
-		"messages": []map[string]interface{}{
-			{
-				"role":    "system",
-				"content": systemPrompt,
-			},
-			{
-				"role":    "user",
-				"content": "Extract data from this receipt image.",
-				"images":  []string{base64Image},
-			},
-		},
-		"stream": false,
-	}
-
-	jsonBody, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost:11434/api/chat", bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to call Ollama API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("Ollama API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var result struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return result.Message.Content, nil
-}
-
-// parseReceiptJSON parses the LLM JSON response into a ParsedReceipt
-func (s *LLMService) parseReceiptJSON(rawJSON string) (*ParsedReceipt, error) {
-	// Clean up the JSON - remove markdown code blocks if present
-	cleaned := rawJSON
-	if len(cleaned) > 7 && cleaned[:7] == "```json" {
-		// Find the closing ```
-		endIdx := len(cleaned) - 3
-		if endIdx > 0 && cleaned[endIdx:] == "```" {
-			cleaned = cleaned[7:endIdx]
+	switch v := content.(type) {
+	case string:
+		rawJSON = v
+	case []byte:
+		rawJSON = string(v)
+	default:
+		// If it's already a map (some providers may return parsed JSON), marshal it back
+		jsonBytes, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal response content: %w", err)
 		}
-	}
-	if len(cleaned) > 3 && cleaned[:3] == "```" {
-		cleaned = cleaned[3:]
-		if len(cleaned) > 3 && cleaned[len(cleaned)-3:] == "```" {
-			cleaned = cleaned[:len(cleaned)-3]
-		}
+		rawJSON = string(jsonBytes)
 	}
 
-	var parsed ParsedReceipt
-	if err := json.Unmarshal([]byte(cleaned), &parsed); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
+	// Parse the JSON into ParsedReceipt
+	var parsedReceipt ParsedReceipt
+	if err := json.Unmarshal([]byte(rawJSON), &parsedReceipt); err != nil {
+		return nil, fmt.Errorf("failed to parse structured response: %w", err)
 	}
 
-	return &parsed, nil
+	return &parsedReceipt, nil
 }
