@@ -4,13 +4,14 @@
 	import { Chart, ArcElement, Tooltip, Legend, Title } from 'chart.js';
 	import { analyticsDateRangeStore } from '$lib/stores';
 	import api from '$lib/api';
-	import type { ByTagResponse, TagSpend } from '$lib/api';
+	import type { ByTagResponse, TagSpend, BudgetStatus } from '$lib/api';
 	
 	Chart.register(ArcElement, Tooltip, Legend, Title);
 	
 	let canvas: HTMLCanvasElement;
 	let chart: Chart | null = null;
 	let data: TagSpend[] = [];
+	let budgetStatuses: BudgetStatus[] = [];
 	let loading = true;
 	let error: string | null = null;
 	let warnings: string[] = [];
@@ -28,11 +29,21 @@
 				to: to.toISOString().split('T')[0]
 			};
 			
-			const response: ByTagResponse = await api.analytics.byTag(params);
+			// Get the month for budget status (use the 'from' date's month)
+			const month = params.from.substring(0, 7); // YYYY-MM format
+			
+			// Fetch both analytics and budget status in parallel
+			const [analyticsResponse, budgetResponse] = await Promise.all([
+				api.analytics.byTag(params),
+				api.budgets.status(month)
+			]);
+			
+			const response: ByTagResponse = analyticsResponse;
 			data = response.data || [];
+			budgetStatuses = budgetResponse || [];
 			
 			if (response.warnings) {
-				warnings = response.warnings.map(w => w.message);
+				warnings = response.warnings.map((w: { message: string }) => w.message);
 			}
 			
 			renderChart();
@@ -121,6 +132,16 @@
 		}).format(value);
 	}
 	
+	function getBudgetForTag(tagId: string): BudgetStatus | undefined {
+		return budgetStatuses.find(b => b.tag_id === tagId);
+	}
+	
+	function getBudgetColorClass(percentage: number): string {
+		if (percentage < 80) return 'green';
+		if (percentage <= 100) return 'yellow';
+		return 'red';
+	}
+	
 	$: totalSpend = data.reduce((sum, d) => sum + d.total, 0);
 	
 	onMount(() => {
@@ -201,10 +222,12 @@
 						<th>Receipts</th>
 						<th>Total</th>
 						<th>% of Total</th>
+						<th>Budget</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each data as tag}
+						{@const budget = getBudgetForTag(tag.tag_id)}
 						<tr on:click={() => goto(`/receipts?tag_id=${tag.tag_id}`)} class="clickable">
 							<td>
 								<span class="tag-badge" style="background-color: {tag.color || getDefaultColor(tag.name)}">
@@ -214,6 +237,21 @@
 							<td>{tag.count}</td>
 							<td>{formatCurrency(tag.total)}</td>
 							<td>{tag.percentage.toFixed(1)}%</td>
+							<td>
+								{#if budget}
+									<div class="budget-progress-container" title="Budget: {formatCurrency(budget.amount_limit)} • Spent: {formatCurrency(budget.spent)} • Remaining: {formatCurrency(budget.remaining)}">
+										<div class="budget-progress-bar-bg">
+											<div 
+												class="budget-progress-bar {getBudgetColorClass(budget.percentage)}"
+												style="width: {Math.min(budget.percentage, 100)}%"
+											></div>
+										</div>
+										<span class="budget-percentage">{budget.percentage.toFixed(0)}%</span>
+									</div>
+								{:else}
+									<span class="no-budget">—</span>
+								{/if}
+							</td>
 						</tr>
 					{/each}
 				</tbody>
@@ -223,6 +261,7 @@
 						<td><strong>{data.reduce((sum, t) => sum + t.count, 0)}</strong></td>
 						<td><strong>{formatCurrency(totalSpend)}</strong></td>
 						<td><strong>100%</strong></td>
+						<td></td>
 					</tr>
 				</tfoot>
 			</table>
@@ -448,6 +487,53 @@
 		font-weight: 500;
 		color: white;
 		white-space: nowrap;
+	}
+	
+	/* Budget Progress Bar Styles */
+	.budget-progress-container {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		cursor: help;
+	}
+	
+	.budget-progress-bar-bg {
+		flex: 1;
+		height: 8px;
+		background: #e5e7eb;
+		border-radius: 4px;
+		overflow: hidden;
+		min-width: 60px;
+	}
+	
+	.budget-progress-bar {
+		height: 100%;
+		border-radius: 4px;
+		transition: width 0.3s ease;
+	}
+	
+	.budget-progress-bar.green {
+		background: #10b981;
+	}
+	
+	.budget-progress-bar.yellow {
+		background: #f59e0b;
+	}
+	
+	.budget-progress-bar.red {
+		background: #ef4444;
+	}
+	
+	.budget-percentage {
+		font-size: 12px;
+		color: #6b7280;
+		min-width: 36px;
+		text-align: right;
+	}
+	
+	.no-budget {
+		color: #9ca3af;
+		font-size: 12px;
 	}
 	
 	.table-hint {

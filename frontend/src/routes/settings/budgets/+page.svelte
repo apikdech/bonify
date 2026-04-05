@@ -685,25 +685,27 @@
 			</div>
 
 			<div class="bg-gray-50 rounded-lg p-4 mb-6">
-				<div class="flex items-center gap-3">
+				{#if budgetToDelete}
 					{@const tag = getTagById(budgetToDelete.tag_id)}
-					<div
-						class="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center {tag ? getTagColorClass(tag.color) : 'bg-primary/10'}"
-					>
-						{#if tag}
-							<TagIcon class="w-5 h-5" />
-						{:else}
-							<Wallet class="w-5 h-5 text-primary" />
-						{/if}
+					<div class="flex items-center gap-3">
+						<div
+							class="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center {tag ? getTagColorClass(tag.color) : 'bg-primary/10'}"
+						>
+							{#if tag}
+								<TagIcon class="w-5 h-5" />
+							{:else}
+								<Wallet class="w-5 h-5 text-primary" />
+							{/if}
+						</div>
+						<div>
+							<span class="font-medium text-gray-900 block">{getBudgetDisplayName(budgetToDelete)}</span>
+							<span class="text-sm text-gray-500">{formatMonthDisplay(budgetToDelete.month)}</span>
+						</div>
 					</div>
-					<div>
-						<span class="font-medium text-gray-900 block">{getBudgetDisplayName(budgetToDelete)}</span>
-						<span class="text-sm text-gray-500">{formatMonthDisplay(budgetToDelete.month)}</span>
-					</div>
-				</div>
+				{/if}
 				<div class="mt-3 pt-3 border-t border-gray-200">
 					<p class="text-sm text-gray-600">
-						Budget limit: <span class="font-medium">{formatCurrency(budgetToDelete.amount_limit)}</span>
+						Budget limit: <span class="font-medium">{formatCurrency(budgetToDelete?.amount_limit || 0)}</span>
 					</p>
 				</div>
 			</div>
